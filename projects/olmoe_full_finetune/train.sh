@@ -19,6 +19,7 @@ MAX_SEQ_LENGTH="${MAX_SEQ_LENGTH:-4096}"
 NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-2}"
 WARMUP_RATIO="${WARMUP_RATIO:-0.03}"
 CHECKPOINTING_STEPS="${CHECKPOINTING_STEPS:-20}"
+DEEPSPEED_CONFIG_FILE="${DEEPSPEED_CONFIG_FILE:-configs/ds_configs/stage3_no_offloading_accelerate.conf}"
 
 for value_name in GPUS MICRO_BATCH_SIZE GLOBAL_BATCH_SIZE MAX_SEQ_LENGTH CHECKPOINTING_STEPS; do
     value="${!value_name}"
@@ -96,7 +97,7 @@ launch=(
     --mixed_precision bf16
     --num_processes "$GPUS"
     --use_deepspeed
-    --deepspeed_config_file configs/ds_configs/stage3_no_offloading_accelerate.conf
+    --deepspeed_config_file "$DEEPSPEED_CONFIG_FILE"
     "${train_args[@]}"
 )
 
