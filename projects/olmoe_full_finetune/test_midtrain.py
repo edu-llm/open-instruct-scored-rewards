@@ -1,6 +1,11 @@
 import torch
 from datasets import IterableDataset
-from projects.olmoe_full_finetune.midtrain import PackedTokenStream, TokenMixtureStream, router_z_loss
+from projects.olmoe_full_finetune.midtrain import (
+    PackedTokenStream,
+    TokenMixtureStream,
+    get_last_complete_checkpoint,
+    router_z_loss,
+)
 
 
 class TinyTokenizer:
@@ -63,3 +68,12 @@ def test_token_mixture_resumes_sources_and_rng():
 
     assert prefix
     assert actual == expected
+
+
+def test_resume_ignores_newer_incomplete_checkpoint(tmp_path):
+    complete = tmp_path / "step_20"
+    complete.mkdir()
+    (complete / "COMPLETED").write_text("COMPLETED\n")
+    (tmp_path / "step_40").mkdir()
+
+    assert get_last_complete_checkpoint(tmp_path) == complete

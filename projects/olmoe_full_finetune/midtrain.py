@@ -159,6 +159,20 @@ def save_checkpoint(
     accelerator.wait_for_everyone()
 
 
+def get_last_complete_checkpoint(output_dir: Path) -> Path | None:
+    """Return the newest checkpoint that finished on every rank."""
+    latest = get_last_checkpoint(str(output_dir))
+    if latest is not None and (Path(latest) / "COMPLETED").is_file():
+        return Path(latest)
+
+    complete_checkpoints = [
+        checkpoint
+        for checkpoint in output_dir.glob("step_*")
+        if checkpoint.is_dir() and (checkpoint / "COMPLETED").is_file()
+    ]
+    return max(complete_checkpoints, key=lambda checkpoint: int(checkpoint.name.removeprefix("step_")), default=None)
+
+
 def stream_jsonl_files(files: list[str], dataset_name: str, dataset_revision: str) -> Iterator[dict[str, str]]:
     """Read only text from heterogeneous JSONL schemas in Dolmino's math tree."""
     for filename in files:
@@ -262,8 +276,7 @@ def main() -> None:
         seed=args.seed,
     )
 
-    resume_checkpoint = get_last_checkpoint(str(args.output_dir))
-    resume_checkpoint = Path(resume_checkpoint) if resume_checkpoint is not None else None
+    resume_checkpoint = get_last_complete_checkpoint(args.output_dir)
     completed_steps = 0
     if resume_checkpoint is not None:
         stream_state_path = resume_checkpoint / f"stream_state_rank{accelerator.process_index}.pt"
