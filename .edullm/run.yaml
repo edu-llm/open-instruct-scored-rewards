@@ -58,6 +58,7 @@ suggested_compute: gpu-8xa100
 # identically on both arms of any speedup comparison.
 command: >-
   bash -lc 'EDULLM_LAUNCH_CHECK=waived python -m pytest -q
+  open_instruct/spec_decode/test_package_imports_vllm.py
   open_instruct/spec_decode/test_olmoe_eagle3.py
   open_instruct/spec_decode/test_metrics_vllm.py; echo "PYTEST_EXIT=$?";
   EDULLM_LAUNCH_CHECK=waived VLLM_USE_FLASHINFER_SAMPLER=0
