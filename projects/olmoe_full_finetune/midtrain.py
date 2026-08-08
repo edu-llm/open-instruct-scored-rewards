@@ -13,7 +13,7 @@ from typing import Any
 
 import fsspec
 import torch
-from accelerate import Accelerator
+from accelerate import Accelerator, DataLoaderConfiguration
 from datasets import IterableDataset as HFIterableDataset
 from datasets import load_dataset
 from huggingface_hub import HfApi
@@ -233,6 +233,10 @@ def main() -> None:
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision="bf16",
         log_with="wandb" if args.with_tracking else None,
+        # The stream is manually partitioned across ranks. This tells
+        # Accelerate that one scheduler step represents one global batch,
+        # preventing it from stepping once per process.
+        dataloader_config=DataLoaderConfiguration(split_batches=True),
     )
     if accelerator.state.deepspeed_plugin is not None:
         deepspeed_config = accelerator.state.deepspeed_plugin.deepspeed_config
