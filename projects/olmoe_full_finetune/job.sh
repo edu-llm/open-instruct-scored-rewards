@@ -12,10 +12,17 @@ export SOURCE_PROJECT_DIR SCRATCH REPO VENV
 if [[ -z "${OLMOE_JOB_SNAPSHOT:-}" ]]; then
     OLMOE_JOB_SNAPSHOT="${TMPDIR:-/tmp}/olmoe_full_finetune_${SLURM_JOB_ID:-$$}"
     mkdir -p "$OLMOE_JOB_SNAPSHOT"
-    cp "$SOURCE_PROJECT_DIR/job.sh" "$SOURCE_PROJECT_DIR/train.sh" "$OLMOE_JOB_SNAPSHOT/"
-    export OLMOE_JOB_SNAPSHOT
+    cp "$SOURCE_PROJECT_DIR/job.sh" "$SOURCE_PROJECT_DIR/train.sh" "$SOURCE_PROJECT_DIR/midtrain.py" \
+        "$SOURCE_PROJECT_DIR/stage3_midtrain_accelerate.conf" \
+        "$SOURCE_PROJECT_DIR/stage3_offloading_accelerate.conf" "$OLMOE_JOB_SNAPSHOT/"
+    export OLMOE_JOB_SNAPSHOT MIDTRAIN_SCRIPT="$OLMOE_JOB_SNAPSHOT/midtrain.py"
     exec bash "$OLMOE_JOB_SNAPSHOT/job.sh"
 fi
+
+if [[ "${DEEPSPEED_CONFIG_FILE:-}" == projects/olmoe_full_finetune/* ]]; then
+    DEEPSPEED_CONFIG_FILE="$OLMOE_JOB_SNAPSHOT/${DEEPSPEED_CONFIG_FILE##*/}"
+fi
+export DEEPSPEED_CONFIG_FILE="${DEEPSPEED_CONFIG_FILE:-$OLMOE_JOB_SNAPSHOT/stage3_midtrain_accelerate.conf}"
 
 echo "started $(date -Is) on $(hostname), job ${SLURM_JOB_ID:-none}"
 
@@ -44,14 +51,14 @@ fi
 
 export WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_DIR="${WANDB_DIR:-$SCRATCH/wandb}"
-export WANDB_PROJECT="${WANDB_PROJECT:-olmoe-full-finetune}"
+export WANDB_PROJECT="${WANDB_PROJECT:-olmoe-midtraining}"
 export WANDB_ENTITY="${WANDB_ENTITY:-eduLLM}"
 mkdir -p "$WANDB_DIR"
 
 commit="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 dirty="$(git -C "$REPO" status --porcelain 2>/dev/null | grep -cvE '^\?\? projects/olmoe_full_finetune/runs/' || true)"
-export WANDB_TAGS="commit-$commit,full-ft,olmoe,cosine,lr-${LR:-unset},seed-${SEED:-8}"
-export WANDB_NOTES="code $commit (uncommitted files: $dirty) | model 6d84c48581ece | dataset d91a0785ade02 | global batch 128 | $(hostname)"
+export WANDB_TAGS="commit-$commit,midtraining,olmoe,cosine,lr-${LR:-unset},seed-${SEED:-42}"
+export WANDB_NOTES="code $commit (uncommitted files: $dirty) | model 6d84c48581ece | dolmino a319f19eef1e | global batch ${GLOBAL_BATCH_SIZE:-1024} | $(hostname)"
 echo "provenance: $WANDB_NOTES"
 if [[ "$dirty" != "0" ]]; then
     echo "WARNING: $dirty files differ from commit $commit; the run is not reproducible from that commit" >&2

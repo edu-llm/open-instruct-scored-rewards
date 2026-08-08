@@ -24,11 +24,10 @@ export SCRATCH REPO SOURCE_PROJECT_DIR
 # not a batch-equivalent quality comparison with the four-GPU recipe.
 export GPUS=1
 export GLOBAL_BATCH_SIZE=1
-export LR="${LR:-2e-5}"
-export SEED="${SEED:-8}"
-export RUN_NAME="${RUN_NAME:-smoke_1gpu_offload}"
+export LR="${LR:-6.1499e-5}"
+export SEED="${SEED:-42}"
+export RUN_NAME="${RUN_NAME:-dolmino_smoke_1gpu_offload}"
 export MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-1}"
-export MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-8}"
 export CHECKPOINTING_STEPS="${CHECKPOINTING_STEPS:-1}"
 export DEEPSPEED_CONFIG_FILE="${DEEPSPEED_CONFIG_FILE:-projects/olmoe_full_finetune/stage3_offloading_accelerate.conf}"
 

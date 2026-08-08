@@ -18,11 +18,11 @@ REPO="${REPO:-$SCRATCH/open-instruct}"
 SOURCE_PROJECT_DIR="$REPO/projects/olmoe_full_finetune"
 export SCRATCH REPO SOURCE_PROJECT_DIR
 
-export LR="${LR:-2e-5}"
-export SEED="${SEED:-8}"
-export RUN_NAME="${RUN_NAME:-smoke}"
-export MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-3}"
-export MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-512}"
+export LR="${LR:-6.1499e-5}"
+export SEED="${SEED:-42}"
+export RUN_NAME="${RUN_NAME:-dolmino_smoke}"
+export GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-4}"
+export MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-1}"
 export CHECKPOINTING_STEPS="${CHECKPOINTING_STEPS:-1}"
 
 cd "$REPO"

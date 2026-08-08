@@ -1,48 +1,52 @@
-# OLMoE full-parameter SFT with cosine decay
+# OLMoE full-parameter midtraining with cosine decay
 
-This project applies the Open-Instruct OLMo 2 7B SFT recipe to the native
-`allenai/OLMoE-1B-7B-0924` checkpoint. It is full-parameter training: no LoRA,
-QLoRA, expert freezing, or hot-expert subset is used.
+This project continues pretraining `allenai/OLMoE-1B-7B-0924` on the OLMo 2
+stage-2 Dolmino mixture. It is causal-language-model midtraining over raw text,
+not Tulu SFT. Every parameter remains trainable: no LoRA, QLoRA, expert
+freezing, or hot-expert subset is used.
 
 ## Recipe provenance
 
-The dense reference is `scripts/train/olmo2/finetune_7b.sh`:
+The dense reference is AllenAI's official
+`OLMo2-7B-stage2-seed42.yaml`:
 
-- dataset: `allenai/tulu-3-sft-olmo-2-mixture-0225`, weight 1.0;
+- dataset: `allenai/dolmino-mix-1124`;
+- 50B-token source mix: DCLM 47.2%, FLAN 16.6%, peS2o 5.85%, Wikipedia
+  7.11%, StackExchange 2.45%, and stage-2 math 20.8%;
 - sequence length: 4096;
-- global batch: 128 sequences;
-- AdamW, weight decay 0;
-- peak learning rate: `2e-5`;
-- warmup: 3%;
-- two epochs;
-- bf16; and
-- DeepSpeed ZeRO-3.
+- global batch: 1024 sequences;
+- 11,931 optimizer steps (approximately 50B tokens);
+- AdamW, betas `(0.9, 0.95)`, epsilon `1e-8`, weight decay `0.1` with input
+  embeddings excluded from decay;
+- peak learning rate: `6.1499e-5`;
+- no warmup; and
+- bf16.
 
 The model revision is pinned to
-`6d84c48581ece794365f2b8e9cfb043c68ade9c5`. The dataset revision observed
-when this launcher was written was
-`d91a0785ade02942520280fb484866fce41e448f`; Open-Instruct does not expose a
-dataset-revision argument, so the revision is recorded in run metadata rather
-than enforced by the loader.
+`6d84c48581ece794365f2b8e9cfb043c68ade9c5`; the dataset is pinned to
+`a319f19eef1e257417b11ea8c30da266ae175557`. The streaming loader enforces both
+revisions and packs documents, separated by EOS, into complete 4096-token
+training examples.
 
-There are three deliberate changes from the dense reference:
+There are four deliberate adaptations:
 
 1. the base checkpoint is OLMoE rather than OLMo 2 7B;
-2. the post-warmup schedule is cosine rather than linear; and
-3. four H100s replace the original 64-GPU launch. Gradient accumulation rises
-   from 2 to 32 so the global batch remains exactly 128.
+2. the requested scheduler is cosine-to-zero rather than the dense recipe's
+   linear-to-zero schedule;
+3. the OLMoE tokenizer replaces the incompatible OLMo 2 tokenizer; and
+4. four H100s replace the original large launch. Gradient accumulation rises to
+   preserve the 1024-sequence global batch.
 
-Gradient checkpointing is enabled to leave memory headroom on four GPUs.
-`--load_balancing_loss` asks Transformers to return router logits; OLMoE then
-adds its checkpoint-configured router auxiliary coefficient to the language
-model loss.
+The model's `0.01` load-balancing auxiliary loss and the original OLMoE `0.001`
+router z-loss are retained. Gradient checkpointing and DeepSpeed ZeRO-3 reduce
+memory use.
 
 ## Sweep
 
-The array tests peak learning rates `1.5e-5`, `1.75e-5`, and `2e-5`. It runs
-one cell at a time because every cell needs the account's four-GPU limit.
+The array tests peak learning rates `4e-5`, `6.1499e-5`, and `8e-5`. It runs one
+cell at a time because every cell needs the account's four-GPU limit.
 
-Run a three-step full-parameter smoke first, then submit the sweep only if the
+Run a one-step full-parameter smoke first, then submit the sweep only if the
 smoke succeeds:
 
 ```bash
@@ -63,10 +67,10 @@ Outputs are isolated by learning rate and seed under:
 
 ```text
 projects/olmoe_full_finetune/runs/
-  smoke/
-  lr_1.5e-5_seed_8/
-  lr_1.75e-5_seed_8/
-  lr_2e-5_seed_8/
+  dolmino_smoke/
+  dolmino_lr_4e-5_seed_42/
+  dolmino_lr_6.1499e-5_seed_42/
+  dolmino_lr_8e-5_seed_42/
   logs/
 ```
 
@@ -78,16 +82,18 @@ resume from the latest complete checkpoint in the same output directory.
 Print the exact command without starting training:
 
 ```bash
-LR=2e-5 DRY_RUN=1 bash projects/olmoe_full_finetune/train.sh
+DRY_RUN=1 bash projects/olmoe_full_finetune/train.sh
 ```
 
 Submit one full run:
 
 ```bash
-LR=2e-5 RUN_NAME=lr_2e-5_seed_8 \
+LR=6.1499e-5 RUN_NAME=dolmino_lr_6.1499e-5_seed_42 \
   sbatch projects/olmoe_full_finetune/train.sbatch
 ```
 
 The launcher rejects a global batch that is not divisible by
-`GPUS * MICRO_BATCH_SIZE`, and prints the effective batch, model revision,
-dataset revision, scheduler, and output directory before Accelerate starts.
+`GPUS * MICRO_BATCH_SIZE`, and prints the effective batch, token budget, pinned
+revisions, source mixture, scheduler, and output directory before Accelerate
+starts. Checkpoints include one data-stream state per rank so a preempted run
+resumes without replaying the Dolmino stream.

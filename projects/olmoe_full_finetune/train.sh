@@ -7,23 +7,24 @@ cd "$REPO"
 
 MODEL="${MODEL:-allenai/OLMoE-1B-7B-0924}"
 MODEL_REVISION="${MODEL_REVISION:-6d84c48581ece794365f2b8e9cfb043c68ade9c5}"
-TOKENIZER="${TOKENIZER:-allenai/OLMoE-1B-7B-0924-Instruct}"
-TOKENIZER_REVISION="${TOKENIZER_REVISION:-7f1c97f440f06ce36705e4f2b843edb5925f4498}"
-DATASET="${DATASET:-allenai/tulu-3-sft-olmo-2-mixture-0225}"
-DATASET_REVISION="${DATASET_REVISION:-d91a0785ade02942520280fb484866fce41e448f}"
+DATASET="${DATASET:-allenai/dolmino-mix-1124}"
+DATASET_REVISION="${DATASET_REVISION:-a319f19eef1e257417b11ea8c30da266ae175557}"
+read -r -a DATASET_CONFIG_ARRAY <<<"${DATASET_CONFIGS:-dclm flan pes2o wiki stackexchange math}"
+read -r -a MIX_PROBABILITY_ARRAY <<<"${MIX_PROBABILITIES:-0.472 0.166 0.0585 0.0711 0.0245 0.208}"
 
-LR="${LR:?set LR to the peak learning rate, for example 2e-5}"
-SEED="${SEED:-8}"
+LR="${LR:-6.1499e-5}"
+SEED="${SEED:-42}"
 GPUS="${GPUS:-4}"
 MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-1}"
-GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}"
+GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-1024}"
 MAX_SEQ_LENGTH="${MAX_SEQ_LENGTH:-4096}"
-NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-2}"
-WARMUP_RATIO="${WARMUP_RATIO:-0.03}"
+MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-11931}"
+LR_SCHEDULER_TYPE="${LR_SCHEDULER_TYPE:-cosine}"
+WARMUP_STEPS="${WARMUP_STEPS:-0}"
 CHECKPOINTING_STEPS="${CHECKPOINTING_STEPS:-20}"
-DEEPSPEED_CONFIG_FILE="${DEEPSPEED_CONFIG_FILE:-configs/ds_configs/stage3_no_offloading_accelerate.conf}"
+DEEPSPEED_CONFIG_FILE="${DEEPSPEED_CONFIG_FILE:-projects/olmoe_full_finetune/stage3_midtrain_accelerate.conf}"
 
-for value_name in GPUS MICRO_BATCH_SIZE GLOBAL_BATCH_SIZE MAX_SEQ_LENGTH CHECKPOINTING_STEPS; do
+for value_name in GPUS MICRO_BATCH_SIZE GLOBAL_BATCH_SIZE MAX_SEQ_LENGTH MAX_TRAIN_STEPS CHECKPOINTING_STEPS; do
     value="${!value_name}"
     if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
         echo "$value_name must be a positive integer, got '$value'" >&2
@@ -42,56 +43,38 @@ lr_slug="${LR//./p}"
 RUN_NAME="${RUN_NAME:-lr_${lr_slug}_seed_${SEED}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_DIR/runs}"
 OUTPUT_DIR="${OUTPUT_DIR:-$OUTPUT_ROOT/$RUN_NAME}"
-DATASET_CACHE="${DATASET_CACHE:-${SCRATCH:-$REPO}/open-instruct-data-cache}"
-mkdir -p "$OUTPUT_DIR" "$DATASET_CACHE"
+mkdir -p "$OUTPUT_DIR"
 
 train_args=(
-    open_instruct/finetune.py
-    --exp_name "$RUN_NAME"
+    "${MIDTRAIN_SCRIPT:-projects/olmoe_full_finetune/midtrain.py}"
+    --run_name "$RUN_NAME"
     --model_name_or_path "$MODEL"
     --model_revision "$MODEL_REVISION"
-    --tokenizer_name_or_path "$TOKENIZER"
-    --tokenizer_revision "$TOKENIZER_REVISION"
-    --use_slow_tokenizer False
-    --dataset_mixer_list "$DATASET" 1.0
-    --dataset_mixer_list_splits train
-    --dataset_local_cache_dir "$DATASET_CACHE"
-    --max_seq_length "$MAX_SEQ_LENGTH"
-    --preprocessing_num_workers "${PREPROCESSING_NUM_WORKERS:-32}"
+    --dataset_name "$DATASET"
+    --dataset_revision "$DATASET_REVISION"
+    --dataset_configs "${DATASET_CONFIG_ARRAY[@]}"
+    --mix_probabilities "${MIX_PROBABILITY_ARRAY[@]}"
+    --shuffle_buffer_size "${SHUFFLE_BUFFER_SIZE:-10000}"
+    --sequence_length "$MAX_SEQ_LENGTH"
     --per_device_train_batch_size "$MICRO_BATCH_SIZE"
     --gradient_accumulation_steps "$GRADIENT_ACCUMULATION_STEPS"
+    --max_train_steps "$MAX_TRAIN_STEPS"
     --learning_rate "$LR"
-    --lr_scheduler_type cosine
-    --warmup_ratio "$WARMUP_RATIO"
-    --weight_decay 0.0
-    --num_train_epochs "$NUM_TRAIN_EPOCHS"
+    --lr_scheduler_type "$LR_SCHEDULER_TYPE"
+    --warmup_steps "$WARMUP_STEPS"
+    --weight_decay "${WEIGHT_DECAY:-0.1}"
+    --router_aux_loss_coef "${ROUTER_AUX_LOSS_COEF:-0.01}"
+    --router_z_loss_coef "${ROUTER_Z_LOSS_COEF:-0.001}"
     --output_dir "$OUTPUT_DIR"
-    --do_not_randomize_output_dir
     --checkpointing_steps "$CHECKPOINTING_STEPS"
     --keep_last_n_checkpoints 1
-    --clean_checkpoints_at_end False
-    --logging_steps 1
-    --load_balancing_loss
-    --gradient_checkpointing
     --seed "$SEED"
-    --timeout "${PROCESS_GROUP_TIMEOUT:-7200}"
-    --push_to_hub False
-    --try_launch_beaker_eval_jobs False
-    --try_auto_save_to_beaker False
-    --verbose
 )
 
-if [[ -n "${MAX_TRAIN_STEPS:-}" ]]; then
-    train_args+=(--max_train_steps "$MAX_TRAIN_STEPS")
-fi
-if [[ -n "${MAX_TRAIN_SAMPLES:-}" ]]; then
-    train_args+=(--max_train_samples "$MAX_TRAIN_SAMPLES")
-fi
 if [[ "${WITH_TRACKING:-1}" == "1" ]]; then
     train_args+=(
         --with_tracking
-        --report_to wandb
-        --wandb_project_name "${WANDB_PROJECT:-olmoe-full-finetune}"
+        --wandb_project "${WANDB_PROJECT:-olmoe-midtraining}"
         --wandb_entity "${WANDB_ENTITY:-eduLLM}"
     )
 fi
@@ -107,8 +90,10 @@ launch=(
 
 echo "run=$RUN_NAME model=$MODEL@$MODEL_REVISION"
 echo "dataset=$DATASET@$DATASET_REVISION"
-echo "full_parameters=true scheduler=cosine peak_lr=$LR warmup_ratio=$WARMUP_RATIO"
+echo "dataset_configs=${DATASET_CONFIG_ARRAY[*]} mix_probabilities=${MIX_PROBABILITY_ARRAY[*]}"
+echo "full_parameters=true scheduler=$LR_SCHEDULER_TYPE peak_lr=$LR warmup_steps=$WARMUP_STEPS"
 echo "gpus=$GPUS micro_batch=$MICRO_BATCH_SIZE grad_accum=$GRADIENT_ACCUMULATION_STEPS global_batch=$GLOBAL_BATCH_SIZE"
+echo "sequence_length=$MAX_SEQ_LENGTH max_steps=$MAX_TRAIN_STEPS token_budget=$((GLOBAL_BATCH_SIZE * MAX_SEQ_LENGTH * MAX_TRAIN_STEPS))"
 echo "output=$OUTPUT_DIR"
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
