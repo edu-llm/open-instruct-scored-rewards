@@ -50,7 +50,7 @@ train_args=(
     --exp_name "$RUN_NAME"
     --model_name_or_path "$MODEL"
     --model_revision "$MODEL_REVISION"
-    --tokenizer_name "$TOKENIZER"
+    --tokenizer_name_or_path "$TOKENIZER"
     --tokenizer_revision "$TOKENIZER_REVISION"
     --use_slow_tokenizer False
     --chat_template_name tulu
