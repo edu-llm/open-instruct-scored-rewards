@@ -601,14 +601,18 @@ def save_with_accelerate(
         if accelerator.is_main_process:
             unwrapped_model.save_pretrained(output_dir, state_dict=state_dict)
     else:
-        # don't use safetensors for saving for now
-        unwrapped_model.save_pretrained(
-            output_dir,
-            is_main_process=accelerator.is_main_process,
-            save_function=accelerator.save,
-            state_dict=state_dict,
-            safe_serialization=False,
-        )
+        # Transformers may inspect or convert the state dict before honoring its
+        # is_main_process argument. Under ZeRO-3 the non-main ranks only have
+        # empty/sharded tensors, so OLMoE conversion fails before the save guard.
+        if accelerator.is_main_process:
+            # don't use safetensors for saving for now
+            unwrapped_model.save_pretrained(
+                output_dir,
+                is_main_process=True,
+                save_function=accelerator.save,
+                state_dict=state_dict,
+                safe_serialization=False,
+            )
 
     if accelerator.is_main_process:
         tokenizer.save_pretrained(output_dir)

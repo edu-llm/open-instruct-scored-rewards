@@ -1,11 +1,29 @@
 import pathlib
 import tempfile
 import unittest
+from unittest.mock import MagicMock
 
 import torch
 
 import open_instruct.model_utils
 from open_instruct.model_utils import Batch, TensorCache
+
+
+class TestSaveWithAccelerate(unittest.TestCase):
+    def test_non_main_rank_does_not_call_save_pretrained(self):
+        accelerator = MagicMock()
+        accelerator.is_main_process = False
+        accelerator.get_state_dict.return_value = {}
+        model = MagicMock()
+        unwrapped_model = MagicMock()
+        accelerator.unwrap_model.return_value = unwrapped_model
+        tokenizer = MagicMock(eos_token_id=1, bos_token_id=2)
+
+        open_instruct.model_utils.save_with_accelerate(accelerator, model, tokenizer, "/tmp/output")
+
+        accelerator.get_state_dict.assert_called_once_with(model)
+        unwrapped_model.save_pretrained.assert_not_called()
+        tokenizer.save_pretrained.assert_not_called()
 
 
 class TestBatchSlicing(unittest.TestCase):
