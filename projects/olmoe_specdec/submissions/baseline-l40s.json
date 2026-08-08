@@ -1,0 +1,16 @@
+{
+  "repository": "open-instruct-scored-rewards",
+  "commit_sha": "762f21f918b2dca3a46e5e4dea1cb6c75decf7ae",
+  "image_digest": "",
+  "workload_profile": "open-instruct-scored-rewards-train",
+  "compute_profile": "gpu-1xl40s",
+  "dataset_release": "none",
+  "team": "post-training",
+  "experiment": "olmoe-specdec-baseline-l40s",
+  "wandb_project": "edullm-p8",
+  "maximum_runtime_hours": "2",
+  "maximum_attempts": "1",
+  "fanout_size": "",
+  "fanout_index_parameter": "",
+  "command": "bash -lc 'EDULLM_LAUNCH_CHECK=waived python -m pytest -q open_instruct/spec_decode/test_olmoe_eagle3.py open_instruct/spec_decode/test_metrics_vllm.py; echo \"PYTEST_EXIT=$?\"; EDULLM_LAUNCH_CHECK=waived python projects/olmoe_specdec/sweep_generation.py --dtype bfloat16 --tensor_parallel_size 1 --output_prefix \"$EDULLM_OUTPUT_PREFIX\" --checkpoint_dir \"$EDULLM_CHECKPOINT_DIR\"'"
+}
