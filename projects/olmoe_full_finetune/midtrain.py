@@ -192,12 +192,29 @@ def load_source(args: argparse.Namespace, config_name: str) -> HFIterableDataset
     )
 
 
+def keep_replica_example(_example: dict[str, Any], index: int, replica_count: int, replica_index: int) -> bool:
+    return index % replica_count == replica_index
+
+
 def load_sources(args: argparse.Namespace, accelerator: Accelerator) -> list[HFIterableDataset]:
     streams = []
     for offset, config_name in enumerate(args.dataset_configs):
         stream = load_source(args, config_name)
         stream = stream.shuffle(seed=args.seed + offset, buffer_size=args.shuffle_buffer_size)
-        stream = stream.shard(num_shards=accelerator.num_processes, index=accelerator.process_index)
+        if stream.num_shards >= accelerator.num_processes:
+            stream = stream.shard(num_shards=accelerator.num_processes, index=accelerator.process_index)
+        else:
+            # Some sources (currently Wikipedia) have fewer physical files than
+            # ranks. Pair ranks on each file, then partition its examples.
+            shard_index = accelerator.process_index % stream.num_shards
+            replica_index = accelerator.process_index // stream.num_shards
+            replica_count = (accelerator.num_processes - shard_index + stream.num_shards - 1) // stream.num_shards
+            stream = stream.shard(num_shards=stream.num_shards, index=shard_index)
+            stream = stream.filter(
+                keep_replica_example,
+                with_indices=True,
+                fn_kwargs={"replica_count": replica_count, "replica_index": replica_index},
+            )
         streams.append(stream)
     return streams
 
