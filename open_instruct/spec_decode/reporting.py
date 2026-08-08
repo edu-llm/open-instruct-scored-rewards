@@ -98,10 +98,12 @@ def step_metrics(
 
 
 #: Concurrency at or below which extra tokens per forward are cheap enough that speculation has
-#: real headroom. Measured on this model, A100 TP=2: quadrupling tokens per forward costs 1.40x at
-#: batch 16 but 2.89x at batch 256, so break-even acceptance length is ~1.4 in the first regime and
-#: ~3.9 in the second. EAGLE-3 realistically reaches 2.7-3.3, so 64 is the boundary between "wins"
-#: and "cannot win" for this architecture. Not a universal constant -- re-measure per model.
+#: real headroom. Measured on this model (see projects/olmoe_specdec/RESULTS-baseline-sweep.md):
+#: quadrupling tokens per forward costs 1.40x at concurrency 16 and 1.77-1.90x at concurrency 64,
+#: so break-even acceptance length is ~1.4 and ~1.8 respectively. Above ~256 the engine saturates,
+#: extra tokens per forward cost linearly, and no achievable acceptance length wins. EAGLE-3
+#: reaches 2.7-3.3 in-domain, which clears 1.8 with margin -- hence 64 as the boundary between
+#: "wins" and "cannot win". Not a universal constant: re-measure per model and per shape.
 SPECULATION_FAVOURABLE_CONCURRENCY = 64
 
 

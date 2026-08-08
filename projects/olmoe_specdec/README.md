@@ -92,13 +92,15 @@ verifiable reward — for 20 steps (`total_episodes 15360`). No draft model, and
 for `B` sequences costs about what a decode forward at `B·(k+1)` costs, so this model's
 batch-scaling curve *is* its verification-cost curve. From the 2026-08-08 A100 TP=2 sweep:
 
-| tokens per forward | measured cost | break-even acceptance length |
+| concurrency | cost of 4× tokens/forward | break-even α (k=3) |
 |---|---|---|
-| batch 16 → 64 (4×) | 1.40× | ≈ 1.4 |
-| batch 256 → 768 (3×) | 2.89× | ≈ 3.9 |
+| 16 | 1.40× | ≈ 1.4 |
+| 64 | 1.77–1.90× | ≈ 1.8 |
+| ≥256 | saturated — cost is linear | unreachable |
 
-EAGLE-3 realistically reaches α of 2.7–3.3 in-domain (paper Tables 3–5). So it wins comfortably
-in the first regime and **cannot win** in the second. Everything therefore hinges on *how much of
+EAGLE-3 realistically reaches α of 2.7–3.3 in-domain (paper Tables 3–5), so at α = 3 it buys
+**1.6–2.1× on generation below concurrency 64** and **cannot win** once the engine saturates.
+Full numbers in `RESULTS-baseline-sweep.md`. Everything therefore hinges on *how much of
 a real rollout runs at low concurrency* — and that is the one thing a fixed-length benchmark
 cannot tell you, because forcing `min_tokens = max_tokens` holds every sequence alive to the end
 and reports a single, maximal concurrency.
@@ -119,9 +121,9 @@ speculation's value, and the probe measures the real thing.
 | `batch/response_lengths` | the real length distribution (upstream already logs this) |
 
 **Reading it.** With `f` the favourable fraction, speculation's generation speedup is roughly
-`f · (α / 1.40) + (1 − f) · (α / 3.9)`, bounded above by the paper's §2.2 step bound at the
-measured R_gen. Concretely at α = 3: `f = 0.5` gives ≈ 1.4× on generation; `f = 0.1` gives ≈ 0.9×,
-i.e. a **loss**. So `f` is the number to look at first, and there is a defensible no-go threshold
+`f · (α / 1.45) + (1 − f) · 1.0`, bounded above by the paper's §2.2 step bound at the
+measured R_gen. Concretely at α = 3: `f = 0.7` gives ≈ 1.75× on generation, `f = 0.4` ≈ 1.43×, `f = 0.1` ≈ 1.11×
+(which the drafting overhead turns into roughly no gain). So `f` is the number to look at first, and there is a defensible no-go threshold
 before any draft is trained.
 
 **Config is pinned, and R_gen is a property of it, not of the model.** 6 learners + 1 engine at
