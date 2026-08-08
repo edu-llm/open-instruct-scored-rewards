@@ -10,9 +10,10 @@ MSE/CE/BCE by ``num_labels`` + ``problem_type``), and registers it with
 builds an Olmo3 backbone + a fresh classification head.
 
 Additive and confined to the experiment overlay — it does not edit ``open_instruct``. The
-reward trainer pools scores via ``rm_common.pooled_scores`` (explicit-mask pooling), so it does
-not depend on this class's own ``forward`` pooling; ``forward`` mirrors Olmo2's for parity with
-any code path (e.g. ``get_reward``) that calls the model directly.
+reward trainer scores via ``rm_common.pooled_scores``, which calls this class's ``forward`` (the
+DistributedDataParallel-correct entry point) and reads its pooled ``logits``. ``forward`` pools at
+the last real token using the attention mask (robust to ``pad_token_id == eos_token_id``), falling
+back to the upstream Olmo2-style pad-token scan only when no mask is supplied.
 """
 
 from __future__ import annotations
@@ -72,17 +73,23 @@ class Olmo3ForSequenceClassification(Olmo3PreTrainedModel):
 
         batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0]
 
-        if self.config.pad_token_id is None and batch_size != 1:
-            raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")
-        if self.config.pad_token_id is None:
+        # Pool at the last *real* token. Prefer the explicit attention mask: a pad-token scan
+        # mislocates the position whenever ``pad_token_id == eos_token_id`` (it stops at the real
+        # eos), and the RM collator always supplies a mask. Fall back to the pad-token scan only
+        # when no mask is given, preserving the upstream Olmo2-style behaviour for that path.
+        if attention_mask is not None:
+            sequence_lengths = attention_mask.long().sum(-1) - 1
+            sequence_lengths = sequence_lengths.to(logits.device)
+        elif self.config.pad_token_id is None:
+            if batch_size != 1:
+                raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")
             sequence_lengths = -1
+        elif input_ids is not None:
+            sequence_lengths = torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
+            sequence_lengths = sequence_lengths % input_ids.shape[-1]
+            sequence_lengths = sequence_lengths.to(logits.device)
         else:
-            if input_ids is not None:
-                sequence_lengths = torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
-                sequence_lengths = sequence_lengths % input_ids.shape[-1]
-                sequence_lengths = sequence_lengths.to(logits.device)
-            else:
-                sequence_lengths = -1
+            sequence_lengths = -1
 
         pooled_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
 

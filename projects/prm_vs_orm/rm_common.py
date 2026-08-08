@@ -135,27 +135,31 @@ class ScoredCollator:
 def pooled_scores(model: Any, input_ids: Any, attention_mask: Any) -> Any:
     """Per-sequence logits pooled at the last real token: shape ``(batch, num_labels)``.
 
-    Mirrors ``open_instruct.model_utils.get_reward`` (backbone + ``model.score`` head, position
-    ids from an exclusive cumsum so left/right padding both work) but generalizes to
-    ``num_labels > 1`` (the PRM's 3 classes) and pools using the *given* mask rather than a
-    pad-token scan, avoiding the ``pad_id == eos_id`` ambiguity.
+    Routes through ``model(...)`` (the top-level ``forward``) rather than reaching into
+    ``model.base_model_prefix`` + ``model.score`` directly. That distinction is load-bearing under
+    data parallelism: plain ``DistributedDataParallel`` does **not** forward attribute access
+    (``ddp.base_model_prefix`` raises ``AttributeError``) and only synchronizes gradients when the
+    wrapper's own ``forward`` is the autograd entry point. ``open_instruct``'s ``get_reward`` reaches
+    into submodules and gets away with it only because it runs under DeepSpeed (whose engine *does*
+    forward attribute access); this trainer uses accelerate's DDP, so it must go through ``forward``.
+
+    ``Olmo3ForSequenceClassification.forward`` pools at the last real token using this same
+    attention mask (robust to ``pad_id == eos_id``), so ORM (1 logit) and PRM (3 logits at a
+    step-boundary prefix) both read the correct position. Works identically on the raw,
+    unwrapped model used at inference (bon_eval / rm_verifier).
     """
     import torch  # noqa: PLC0415
 
     position_ids = attention_mask.cumsum(1) - attention_mask.long()  # exclusive cumsum
     input_ids = torch.masked_fill(input_ids, attention_mask == 0, 0)
-    backbone = getattr(model, model.base_model_prefix)
-    out = backbone(
+    out = model(
         input_ids=input_ids,
         attention_mask=attention_mask,
         position_ids=position_ids,
         return_dict=True,
-        output_hidden_states=True,
         use_cache=False,
     )
-    logits = model.score(out.hidden_states[-1])  # (batch, seq, num_labels)
-    last = attention_mask.sum(1) - 1  # index of the last real token per row
-    return logits[torch.arange(logits.size(0), device=logits.device), last]  # (batch, num_labels)
+    return out.logits  # (batch, num_labels) — forward pools at the last real token by mask
 
 
 class _FakeTokenizer:
