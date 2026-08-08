@@ -7,6 +7,8 @@ cd "$REPO"
 
 MODEL="${MODEL:-allenai/OLMoE-1B-7B-0924}"
 MODEL_REVISION="${MODEL_REVISION:-6d84c48581ece794365f2b8e9cfb043c68ade9c5}"
+TOKENIZER="${TOKENIZER:-allenai/OLMoE-1B-7B-0924-Instruct}"
+TOKENIZER_REVISION="${TOKENIZER_REVISION:-7f1c97f440f06ce36705e4f2b843edb5925f4498}"
 DATASET="${DATASET:-allenai/tulu-3-sft-olmo-2-mixture-0225}"
 DATASET_REVISION="${DATASET_REVISION:-d91a0785ade02942520280fb484866fce41e448f}"
 
@@ -48,9 +50,10 @@ train_args=(
     --exp_name "$RUN_NAME"
     --model_name_or_path "$MODEL"
     --model_revision "$MODEL_REVISION"
-    --tokenizer_name "$MODEL"
-    --tokenizer_revision "$MODEL_REVISION"
+    --tokenizer_name "$TOKENIZER"
+    --tokenizer_revision "$TOKENIZER_REVISION"
     --use_slow_tokenizer False
+    --chat_template_name tulu
     --add_bos
     --dataset_mixer_list "$DATASET" 1.0
     --dataset_mixer_list_splits train
