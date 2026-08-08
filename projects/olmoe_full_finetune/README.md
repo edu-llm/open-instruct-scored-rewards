@@ -100,3 +100,49 @@ The launcher rejects a global batch that is not divisible by
 revisions, source mixture, scheduler, and output directory before Accelerate
 starts. Checkpoints include one data-stream state per rank so a preempted run
 resumes without replaying the Dolmino stream.
+
+## AWS Batch through eduLLM
+
+The repository root's `.edullm/run.yaml` is a one-step, eight-A100 smoke test.
+The platform does not currently provision H100 profiles, so this uses
+`gpu-8xa100`. It launches eight Accelerate/DeepSpeed ranks, names bf16 in the
+submitted command for the hardware guard, and streams the public pinned model
+and Dolmino revisions from Hugging Face.
+
+The trainer still writes DeepSpeed checkpoints to local POSIX storage first.
+On AWS, rank zero then uploads every checkpoint shard to
+`$EDULLM_CHECKPOINT_DIR`, using CRC32C for multipart S3 writes. The remote
+`COMPLETED` manifest is written last; a retry ignores torn uploads, downloads
+the newest complete step before model construction, and restores the optimizer,
+scheduler, random states, and one Dolmino stream state per rank. Once a newer
+step is committed, older remote steps are pruned. The final Hugging Face export
+is uploaded under `$EDULLM_OUTPUT_PREFIX/final/`.
+
+Install the current platform CLI and run its local admission check:
+
+```bash
+uv tool install --force git+https://github.com/edu-llm/platform
+edullm check --json \
+  --repository open-instruct-scored-rewards \
+  --team post-training \
+  --experiment olmoe-dolmino-midtrain \
+  --dataset none
+```
+
+Read every refusal and the live cost/approval result before submitting. After
+the branch's research image has built, the smoke submission is:
+
+```bash
+edullm submit \
+  --repository open-instruct-scored-rewards \
+  --team post-training \
+  --experiment olmoe-dolmino-midtrain \
+  --dataset none
+```
+
+Use `edullm status --json` for polling. Do not call AWS directly from a laptop.
+The 50B-token full recipe is not encoded in the root run specification: the
+registered Open-Instruct training profile is limited to 24 hours and one
+attempt, while the measured recipe is far longer even on eight cards. A full
+AWS launch therefore needs an approved workload/runtime plan rather than
+silently turning this smoke specification into an incomplete training run.

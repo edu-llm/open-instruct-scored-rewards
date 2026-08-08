@@ -72,6 +72,13 @@ train_args=(
     --seed "$SEED"
 )
 
+if [[ -n "${REMOTE_CHECKPOINT_DIR:-}" ]]; then
+    train_args+=(--remote_checkpoint_dir "$REMOTE_CHECKPOINT_DIR")
+fi
+if [[ -n "${REMOTE_OUTPUT_DIR:-}" ]]; then
+    train_args+=(--remote_output_dir "$REMOTE_OUTPUT_DIR")
+fi
+
 if [[ "${WITH_TRACKING:-1}" == "1" ]]; then
     train_args+=(
         --with_tracking
@@ -96,6 +103,12 @@ echo "full_parameters=true scheduler=$LR_SCHEDULER_TYPE peak_lr=$LR warmup_steps
 echo "gpus=$GPUS micro_batch=$MICRO_BATCH_SIZE grad_accum=$GRADIENT_ACCUMULATION_STEPS global_batch=$GLOBAL_BATCH_SIZE"
 echo "sequence_length=$MAX_SEQ_LENGTH max_steps=$MAX_TRAIN_STEPS token_budget=$((GLOBAL_BATCH_SIZE * MAX_SEQ_LENGTH * MAX_TRAIN_STEPS))"
 echo "output=$OUTPUT_DIR"
+if [[ -n "${REMOTE_CHECKPOINT_DIR:-}" ]]; then
+    echo "remote_checkpoint_dir=$REMOTE_CHECKPOINT_DIR"
+fi
+if [[ -n "${REMOTE_OUTPUT_DIR:-}" ]]; then
+    echo "remote_output_dir=$REMOTE_OUTPUT_DIR/final/"
+fi
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
     printf '%q ' "${launch[@]}"

@@ -1,0 +1,44 @@
+schema_version: 1
+workload_profile: open-instruct-scored-rewards-check
+suggested_compute: gpu-8xa100
+command: >-
+  bash -lc 'export PRECISION=bfloat16
+  HF_HOME=/tmp/hf-cache
+  HF_HUB_CACHE=/tmp/hf-cache/hub
+  TOKENIZERS_PARALLELISM=false
+  NCCL_CUMEM_ENABLE=0
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+  ;
+  mkdir -p "/tmp/olmoe/$EDULLM_RUN_ID"
+  ;
+  accelerate launch
+  --mixed_precision bf16
+  --num_processes 8
+  --use_deepspeed
+  --deepspeed_config_file projects/olmoe_full_finetune/stage3_midtrain_accelerate.conf
+  projects/olmoe_full_finetune/midtrain.py
+  --run_name "$EDULLM_RUN_ID"
+  --model_name_or_path allenai/OLMoE-1B-7B-0924
+  --model_revision 6d84c48581ece794365f2b8e9cfb043c68ade9c5
+  --dataset_name allenai/dolmino-mix-1124
+  --dataset_revision a319f19eef1e257417b11ea8c30da266ae175557
+  --sequence_length 4096
+  --per_device_train_batch_size 1
+  --gradient_accumulation_steps 1
+  --max_train_steps 1
+  --learning_rate 6.1499e-5
+  --lr_scheduler_type cosine
+  --warmup_steps 0
+  --weight_decay 0.1
+  --router_aux_loss_coef 0.01
+  --router_z_loss_coef 0.001
+  --checkpointing_steps 1
+  --keep_last_n_checkpoints 1
+  --empty_cache_steps 1
+  --output_dir "/tmp/olmoe/$EDULLM_RUN_ID"
+  --remote_checkpoint_dir "$EDULLM_CHECKPOINT_DIR"
+  --remote_output_dir "$EDULLM_OUTPUT_PREFIX"
+  --seed 42
+  --with_tracking
+  --wandb_project "$WANDB_PROJECT"
+  --wandb_entity "$WANDB_ENTITY"'

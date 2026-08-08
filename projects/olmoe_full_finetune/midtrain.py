@@ -8,15 +8,17 @@ import json
 import random
 import time
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import fsspec
 import torch
-from accelerate import Accelerator, DataLoaderConfiguration
+from accelerate import Accelerator, DataLoaderConfiguration, InitProcessGroupKwargs
 from datasets import IterableDataset as HFIterableDataset
 from datasets import load_dataset
 from huggingface_hub import HfApi
+from projects.olmoe_full_finetune.s3_checkpoints import S3CheckpointStore
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, get_scheduler, set_seed
 
@@ -123,6 +125,13 @@ def parse_args() -> argparse.Namespace:
         help="Release unused CUDA allocator blocks every N optimizer steps; 0 disables it.",
     )
     parser.add_argument("--output_dir", type=Path, required=True)
+    parser.add_argument(
+        "--remote_checkpoint_dir",
+        help="Optional s3:// prefix used to restore and persist resumable DeepSpeed checkpoints.",
+    )
+    parser.add_argument(
+        "--remote_output_dir", help="Optional s3:// prefix whose final/ directory receives the exported model."
+    )
     parser.add_argument("--run_name", required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--with_tracking", action="store_true")
@@ -140,7 +149,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def save_checkpoint(
-    accelerator: Accelerator, stream: TokenMixtureStream, output_dir: Path, completed_steps: int, keep_last_n: int
+    accelerator: Accelerator,
+    stream: TokenMixtureStream,
+    output_dir: Path,
+    completed_steps: int,
+    keep_last_n: int,
+    remote_store: S3CheckpointStore | None = None,
 ) -> None:
     checkpoint_dir = output_dir / f"step_{completed_steps}"
     accelerator.save_state(str(checkpoint_dir))
@@ -155,6 +169,8 @@ def save_checkpoint(
     accelerator.wait_for_everyone()
 
     if accelerator.is_main_process:
+        if remote_store is not None:
+            remote_store.upload_step(checkpoint_dir)
         clean_last_n_checkpoints(str(output_dir), keep_last_n)
     accelerator.wait_for_everyone()
 
@@ -251,6 +267,9 @@ def main() -> None:
         # Accelerate that one scheduler step represents one global batch,
         # preventing it from stepping once per process.
         dataloader_config=DataLoaderConfiguration(split_batches=True),
+        # Rank zero may spend several minutes transferring a ~97 GB checkpoint
+        # while the other ranks wait at a barrier.
+        kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(hours=2))],
     )
     if accelerator.state.deepspeed_plugin is not None:
         deepspeed_config = accelerator.state.deepspeed_plugin.deepspeed_config
@@ -260,6 +279,14 @@ def main() -> None:
             args.per_device_train_batch_size * args.gradient_accumulation_steps * accelerator.num_processes
         )
     set_seed(args.seed)
+
+    remote_checkpoint_store = None
+    if accelerator.is_main_process and args.remote_checkpoint_dir:
+        remote_checkpoint_store = S3CheckpointStore(args.remote_checkpoint_dir)
+        restored = remote_checkpoint_store.download_latest(args.output_dir)
+        if restored is not None:
+            accelerator.print(f"Restored remote checkpoint {restored.name} from {args.remote_checkpoint_dir}")
+    accelerator.wait_for_everyone()
 
     if args.with_tracking:
         accelerator.init_trackers(
@@ -395,7 +422,14 @@ def main() -> None:
             log_started = time.perf_counter()
 
             if completed_steps % args.checkpointing_steps == 0 or completed_steps == args.max_train_steps:
-                save_checkpoint(accelerator, stream, args.output_dir, completed_steps, args.keep_last_n_checkpoints)
+                save_checkpoint(
+                    accelerator,
+                    stream,
+                    args.output_dir,
+                    completed_steps,
+                    args.keep_last_n_checkpoints,
+                    remote_checkpoint_store,
+                )
             if args.empty_cache_steps and completed_steps % args.empty_cache_steps == 0:
                 torch.cuda.empty_cache()
             if completed_steps >= args.max_train_steps:
@@ -403,6 +437,10 @@ def main() -> None:
 
     accelerator.wait_for_everyone()
     save_with_accelerate(accelerator, model, tokenizer, str(args.output_dir), chat_template_name=None)
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process and args.remote_output_dir:
+        S3CheckpointStore(args.remote_output_dir).upload_final_export(args.output_dir)
+    accelerator.wait_for_everyone()
     if args.with_tracking:
         accelerator.end_training()
 
