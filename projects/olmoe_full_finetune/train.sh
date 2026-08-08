@@ -69,6 +69,7 @@ train_args=(
     --do_not_randomize_output_dir
     --checkpointing_steps "$CHECKPOINTING_STEPS"
     --keep_last_n_checkpoints 1
+    --clean_checkpoints_at_end False
     --logging_steps 1
     --load_balancing_loss
     --gradient_checkpointing
