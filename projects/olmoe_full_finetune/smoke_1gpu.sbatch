@@ -30,7 +30,7 @@ export RUN_NAME="${RUN_NAME:-smoke_1gpu_offload}"
 export MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-1}"
 export MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-8}"
 export CHECKPOINTING_STEPS="${CHECKPOINTING_STEPS:-1}"
-export DEEPSPEED_CONFIG_FILE=configs/ds_configs/stage3_offloading_accelerate.conf
+export DEEPSPEED_CONFIG_FILE="${DEEPSPEED_CONFIG_FILE:-projects/olmoe_full_finetune/stage3_offloading_accelerate.conf}"
 
 cd "$REPO"
 exec bash "$SOURCE_PROJECT_DIR/job.sh"
