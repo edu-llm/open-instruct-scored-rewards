@@ -74,6 +74,8 @@ train_args=(
     --seed "$SEED"
     --timeout "${PROCESS_GROUP_TIMEOUT:-7200}"
     --push_to_hub False
+    --try_launch_beaker_eval_jobs False
+    --try_auto_save_to_beaker False
     --verbose
 )
 
