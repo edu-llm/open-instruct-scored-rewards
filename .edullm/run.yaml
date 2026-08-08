@@ -37,11 +37,31 @@ suggested_compute: gpu-8xa100
 # the way a shell would, and in `export EDULLM_LAUNCH_CHECK=waived` that token is an *argument to
 # export* rather than an assignment word, so it does not count. Written once per invocation
 # because a prefix assignment scopes to the one simple command it precedes.
+#
+# VLLM_USE_FLASHINFER_SAMPLER=0 WORKS AROUND A DEFECT IN THIS IMAGE, NOT IN vLLM OR IN THIS CODE.
+# vLLM prefers FlashInfer for top-p/top-k sampling and JIT-compiles those kernels on first use.
+# In this image that compile cannot succeed, and it fails two different ways at once:
+#
+#   nvidia/cu13/include/cooperative_groups/details/info.h:50: fatal error: nv/target: No such
+#     file or directory            <- the pip cu13 include tree has no CCCL/libcu++ headers
+#   ptxas ...: Unsupported .version 9.3; current version is '9.0'
+#                                  <- nvcc emits PTX ISA 9.3, the ptxas on PATH understands 9.0
+#
+# Two CUDA toolchains are mixed, so nvcc and ptxas disagree. Measured on both gpu-8xa100 (sm_80,
+# run_019fe273) and gpu-1xl40s (sm_89, run_019fe294), so it is not shape-specific, and it will hit
+# any vLLM run on this image that reaches the sampler. The image's own build probe runs
+# `nvcc --version` and `import deepspeed, torch, vllm` and never JIT-compiles anything, which is
+# why the image passes its gate and fails a hundred seconds into a paid run.
+#
+# 0 falls back to PyTorch-native top-p/top-k. Nothing about the measurement depends on which
+# sampler implementation runs -- but note it is on the generation path, so it must be set
+# identically on both arms of any speedup comparison.
 command: >-
   bash -lc 'EDULLM_LAUNCH_CHECK=waived python -m pytest -q
   open_instruct/spec_decode/test_olmoe_eagle3.py
   open_instruct/spec_decode/test_metrics_vllm.py; echo "PYTEST_EXIT=$?";
-  EDULLM_LAUNCH_CHECK=waived python projects/olmoe_specdec/sweep_generation.py
+  EDULLM_LAUNCH_CHECK=waived VLLM_USE_FLASHINFER_SAMPLER=0
+  python projects/olmoe_specdec/sweep_generation.py
   --dtype bfloat16 --tensor_parallel_size 2
   --output_prefix "$EDULLM_OUTPUT_PREFIX"
   --checkpoint_dir "$EDULLM_CHECKPOINT_DIR"'

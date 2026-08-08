@@ -23,11 +23,10 @@ from vllm.model_executor.models.interfaces import EagleModelMixin, supports_eagl
 from vllm.model_executor.models.olmoe import OlmoeForCausalLM, OlmoeModel
 from vllm.model_executor.models.registry import ModelRegistry
 
-from open_instruct.spec_decode import olmoe_eagle3
-from open_instruct.spec_decode.olmoe_eagle3 import (
+from open_instruct.spec_decode.olmoe_eagle3 import OlmoeForCausalLMEagle3, OlmoeModelEagle3
+from open_instruct.spec_decode.registration import (
     OLMOE_ARCH,
-    OlmoeForCausalLMEagle3,
-    OlmoeModelEagle3,
+    OLMOE_EAGLE3_MODULE,
     assert_registered,
     register_olmoe_eagle3,
 )
@@ -133,7 +132,7 @@ class TestRegistration:
         # breaks the forked engine workers open-instruct runs.
         register_olmoe_eagle3()
         entry = ModelRegistry.models[OLMOE_ARCH]
-        assert entry.module_name == olmoe_eagle3.__name__
+        assert entry.module_name == OLMOE_EAGLE3_MODULE
         assert entry.class_name == "OlmoeForCausalLMEagle3"
 
     def test_register_is_idempotent(self, clean_registry):

@@ -12,5 +12,5 @@
   "maximum_attempts": "1",
   "fanout_size": "",
   "fanout_index_parameter": "",
-  "command": "bash -lc 'EDULLM_LAUNCH_CHECK=waived python -m pytest -q open_instruct/spec_decode/test_olmoe_eagle3.py open_instruct/spec_decode/test_metrics_vllm.py; echo \"PYTEST_EXIT=$?\"; EDULLM_LAUNCH_CHECK=waived python projects/olmoe_specdec/sweep_generation.py --dtype bfloat16 --tensor_parallel_size 1 --output_prefix \"$EDULLM_OUTPUT_PREFIX\" --checkpoint_dir \"$EDULLM_CHECKPOINT_DIR\"'"
+  "command": "bash -lc 'EDULLM_LAUNCH_CHECK=waived python -m pytest -q open_instruct/spec_decode/test_olmoe_eagle3.py open_instruct/spec_decode/test_metrics_vllm.py; echo \"PYTEST_EXIT=$?\"; EDULLM_LAUNCH_CHECK=waived VLLM_USE_FLASHINFER_SAMPLER=0 python projects/olmoe_specdec/sweep_generation.py --dtype bfloat16 --tensor_parallel_size 1 --output_prefix \"$EDULLM_OUTPUT_PREFIX\" --checkpoint_dir \"$EDULLM_CHECKPOINT_DIR\"'"
 }
