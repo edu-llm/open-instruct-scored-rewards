@@ -59,6 +59,8 @@ from vllm.model_executor.models.olmoe import OlmoeDecoderLayer, OlmoeForCausalLM
 from vllm.model_executor.models.utils import AutoWeightsLoader, maybe_prefix
 from vllm.sequence import IntermediateTensors
 
+from open_instruct.spec_decode import moe_weights
+
 
 class OlmoeModelEagle3(OlmoeModel, EagleModelMixin):
     """``OlmoeModel`` that also returns the hidden states EAGLE-3 drafts from.
@@ -158,12 +160,19 @@ class OlmoeForCausalLMEagle3(OlmoeForCausalLM, SupportsEagle3):
         return self.model(input_ids, positions, intermediate_tensors, inputs_embeds)
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        # Identical to upstream's, restated only to document that the checkpoint is unchanged:
-        # ``OlmoeModelEagle3`` registers the same submodules under the same names, so an OLMoE
-        # checkpoint loads with no remapping and no missing keys, and the MoE and qkv handling
-        # comes from the inherited ``OlmoeModel.load_weights`` that ``AutoWeightsLoader`` finds.
+        # The only functional difference from upstream's, and it has nothing to do with EAGLE-3:
+        # transformers 5.x hands over each layer's experts as two fused tensors, which vLLM 0.21's
+        # per-expert mapping cannot match, so a GRPO weight sync dies with
+        # KeyError: 'layers.0.mlp.experts.gate_up_proj'. unfuse_olmoe_experts expands them and is a
+        # no-op on an already-per-expert stream, so the initial load from a transformers-4-era Hub
+        # checkpoint is unaffected. See moe_weights.py for why the split order is derived rather
+        # than assumed.
+        #
+        # Submodule names are otherwise identical to upstream's, so an OLMoE checkpoint still loads
+        # with no remapping and no missing keys, and the qkv stacking and MoE routing come from the
+        # inherited OlmoeModel.load_weights that AutoWeightsLoader finds.
         loader = AutoWeightsLoader(self)
-        return loader.load_weights(weights)
+        return loader.load_weights(moe_weights.unfuse_olmoe_experts(weights))
 
 
 def verify_supports_eagle3() -> None:

@@ -679,15 +679,20 @@ class LLMRayActor:
         num_gpus = kwargs.pop("num_gpus")
         # Popped rather than passed on: AsyncEngineArgs has no such field.
         collect_spec_decode_stats = kwargs.pop("collect_spec_decode_stats", False)
-        # EAGLE-3 needs a target that emits auxiliary hidden states, and vLLM's OLMoE does not.
-        # Register the replacement before the engine exists: the engine core runs in this
-        # process (VLLM_ENABLE_V1_MULTIPROCESSING=0 is set in the actor's runtime env) and its
-        # workers are forked from it, so a lazy registration made here is the one they resolve
-        # through. Registering for any speculative_config rather than only method="eagle3",
-        # because the replacement is a superset of upstream's class and inert without a drafter.
-        if kwargs.get("speculative_config"):
-            registration.register_olmoe_eagle3()
-            registration.assert_registered()
+        # Registered unconditionally, and only the first of these two reasons is about speculation.
+        #
+        # 1. EAGLE-3 needs a target that emits auxiliary hidden states, and vLLM's OLMoE does not.
+        # 2. transformers 5.x fuses each layer's experts into two tensors, which vLLM 0.21's
+        #    per-expert weight mapping cannot match, so *any* OLMoE GRPO run dies on its first
+        #    weight sync with KeyError: 'layers.0.mlp.experts.gate_up_proj'. The replacement class
+        #    unfuses them. That makes this a correctness fix for plain runs, not an opt-in.
+        #
+        # Inert for every other architecture: the registry key is 'OlmoeForCausalLM', so nothing
+        # else resolves through it. Before the engine exists and in this process on purpose -- the
+        # engine core runs here (VLLM_ENABLE_V1_MULTIPROCESSING=0 in the actor's runtime env) and
+        # its workers are forked from it, so a lazy registration made here is what they resolve.
+        registration.register_olmoe_eagle3()
+        registration.assert_registered()
         if bundle_indices is not None:
             os.environ["VLLM_RAY_PER_WORKER_GPUS"] = str(num_gpus)
             os.environ["VLLM_RAY_BUNDLE_INDICES"] = ",".join(map(str, bundle_indices))
