@@ -32,7 +32,7 @@ from open_instruct import logger_utils
 
 logger = logger_utils.setup_logger(__name__)
 
-_COUNTER_KEYS = ("num_drafts", "num_draft_tokens", "num_accepted_tokens")
+_COUNTER_KEYS = ("num_drafts", "num_draft_tokens", "num_accepted_tokens", "num_iterations", "running_reqs_total")
 
 
 def step_speedup_bound(generation_share: float, acceptance_length: float) -> float | None:
@@ -75,6 +75,7 @@ def step_metrics(
     metrics["spec/num_drafts"] = totals["num_drafts"]
     metrics["spec/num_draft_tokens"] = totals["num_draft_tokens"]
     metrics["spec/num_accepted_tokens"] = totals["num_accepted_tokens"]
+    metrics.update(_concurrency_metrics(totals))
 
     if totals["num_drafts"] <= 0:
         # The baseline arm's normal state. Left absent rather than zero: an acceptance length of
@@ -96,6 +97,46 @@ def step_metrics(
     return metrics
 
 
+#: Concurrency at or below which extra tokens per forward are cheap enough that speculation has
+#: real headroom. Measured on this model, A100 TP=2: quadrupling tokens per forward costs 1.40x at
+#: batch 16 but 2.89x at batch 256, so break-even acceptance length is ~1.4 in the first regime and
+#: ~3.9 in the second. EAGLE-3 realistically reaches 2.7-3.3, so 64 is the boundary between "wins"
+#: and "cannot win" for this architecture. Not a universal constant -- re-measure per model.
+SPECULATION_FAVOURABLE_CONCURRENCY = 64
+
+
+def _concurrency_metrics(totals: dict[str, Any]) -> dict[str, Any]:
+    """How much of this step's generation ran at a concurrency where speculation could pay.
+
+    This is the measurement the whole go/no-go rests on, and it is why a real RL step is worth
+    running rather than a fixed-length benchmark. A benchmark holds every sequence alive for the
+    full length, so it reports one concurrency. A real rollout does not: RLVR-GSM answers are short
+    and finish at staggered times, so a step starts near its nominal batch and drains, and the
+    draining tail is exactly where verifying k+1 tokens is nearly as cheap as verifying one.
+
+    ``favourable_iteration_fraction`` is the fraction of forward passes that ran at or below
+    :data:`SPECULATION_FAVOURABLE_CONCURRENCY`. It counts iterations rather than tokens on purpose:
+    speculation removes *forward passes*, so forwards are the unit its benefit is denominated in.
+    """
+    num_iterations = totals.get("num_iterations") or 0
+    out: dict[str, Any] = {}
+    if num_iterations <= 0:
+        return out
+
+    out["spec/engine_iterations"] = num_iterations
+    mean_running = totals.get("mean_running_reqs")
+    if mean_running is not None:
+        out["spec/mean_running_reqs"] = mean_running
+
+    buckets = totals.get("concurrency_buckets") or {}
+    favourable = sum(count for edge, count in buckets.items() if edge <= SPECULATION_FAVOURABLE_CONCURRENCY)
+    out["spec/favourable_iteration_fraction"] = favourable / num_iterations
+    for edge, count in sorted(buckets.items()):
+        label = "inf" if edge > 1 << 20 else str(edge)
+        out[f"spec/concurrency_le_{label}"] = count / num_iterations
+    return out
+
+
 def _drain(vllm_engines: list[ray.actor.ActorHandle]) -> dict[str, int] | None:
     """Sum the counters across engines, or None if they could not be read.
 
@@ -112,10 +153,18 @@ def _drain(vllm_engines: list[ray.actor.ActorHandle]) -> dict[str, int] | None:
         logger.exception("spec_decode: could not drain acceptance metrics; skipping this step")
         return None
 
-    totals = dict.fromkeys(_COUNTER_KEYS, 0)
+    totals: dict[str, Any] = dict.fromkeys(_COUNTER_KEYS, 0)
+    buckets: dict[int, int] = {}
     for engine_metrics in per_engine:
         if not engine_metrics:
             continue
         for key in _COUNTER_KEYS:
             totals[key] += engine_metrics.get(key, 0) or 0
+        for edge, count in (engine_metrics.get("concurrency_buckets") or {}).items():
+            buckets[edge] = buckets.get(edge, 0) + count
+    totals["concurrency_buckets"] = buckets
+    # Summed from raw totals rather than averaged from each actor's mean: a mean of means is only
+    # the mean when every actor ran the same number of iterations, which they do not.
+    if totals["num_iterations"] > 0:
+        totals["mean_running_reqs"] = totals["running_reqs_total"] / totals["num_iterations"]
     return totals

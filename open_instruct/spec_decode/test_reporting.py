@@ -37,6 +37,65 @@ def fake_ray(monkeypatch):
     monkeypatch.setattr(reporting.ray, "get", lambda refs: list(refs))
 
 
+def with_concurrency(payload, buckets, num_iterations=None, running_total=None):
+    """Attach a concurrency histogram, as an engine's drain() would."""
+    payload = dict(payload)
+    payload["concurrency_buckets"] = buckets
+    payload["num_iterations"] = num_iterations if num_iterations is not None else sum(buckets.values())
+    payload["running_reqs_total"] = running_total if running_total is not None else 0
+    return payload
+
+
+class TestConcurrencyProfile:
+    """The measurement the go/no-go actually rests on.
+
+    Verifying k+1 tokens for B sequences costs roughly a decode forward at B*(k+1). So whether
+    speculation can pay is decided by how much of a real rollout runs at low concurrency, which is
+    what these keys report. They must be emitted by the *baseline* arm too -- that arm drafts
+    nothing, and is precisely the run that decides whether a draft is worth training.
+    """
+
+    def test_emitted_by_the_baseline_arm_which_drafts_nothing(self):
+        payload = with_concurrency(counters(0, 0, 0), {8: 30, 64: 20, 768: 50}, running_total=10000)
+        metrics = reporting.step_metrics([FakeEngine(payload)], True, 7.0, 10.0)
+        assert "spec/acceptance_length" not in metrics
+        assert metrics["spec/engine_iterations"] == 100
+        assert metrics["spec/favourable_iteration_fraction"] == pytest.approx(0.5)
+
+    def test_favourable_fraction_counts_iterations_at_or_below_the_threshold(self):
+        # 8 and 64 are at or below SPECULATION_FAVOURABLE_CONCURRENCY=64; 128 and above are not.
+        buckets = {8: 10, 64: 10, 128: 40, 768: 40}
+        metrics = reporting.step_metrics([FakeEngine(with_concurrency(counters(0, 0, 0), buckets))], True, 7.0, 10.0)
+        assert metrics["spec/favourable_iteration_fraction"] == pytest.approx(0.2)
+
+    def test_a_saturated_rollout_reports_no_favourable_iterations(self):
+        # The pessimistic case: every forward carried a full batch, so extra tokens per forward
+        # cost nearly linearly and no achievable acceptance length wins.
+        buckets = {768: 100}
+        metrics = reporting.step_metrics([FakeEngine(with_concurrency(counters(0, 0, 0), buckets))], True, 7.0, 10.0)
+        assert metrics["spec/favourable_iteration_fraction"] == pytest.approx(0.0)
+
+    def test_mean_running_reqs_is_summed_across_engines_not_averaged(self):
+        # Engine A: 10 iterations carrying 10 reqs each. Engine B: 90 iterations carrying 810 each.
+        # Correct mean over forwards is (100 + 72900)/100 = 730. Averaging per-engine means would
+        # give (10 + 810)/2 = 410, which is the mean of two means and not the mean.
+        a = with_concurrency(counters(0, 0, 0), {16: 10}, num_iterations=10, running_total=100)
+        b = with_concurrency(counters(0, 0, 0), {768: 90}, num_iterations=90, running_total=72900)
+        metrics = reporting.step_metrics([FakeEngine(a), FakeEngine(b)], True, 7.0, 10.0)
+        assert metrics["spec/mean_running_reqs"] == pytest.approx(730.0)
+
+    def test_buckets_are_reported_as_fractions_that_sum_to_one(self):
+        buckets = {8: 25, 64: 25, 256: 25, 768: 25}
+        metrics = reporting.step_metrics([FakeEngine(with_concurrency(counters(0, 0, 0), buckets))], True, 7.0, 10.0)
+        fractions = [v for k, v in metrics.items() if k.startswith("spec/concurrency_le_")]
+        assert sum(fractions) == pytest.approx(1.0)
+
+    def test_absent_when_no_iterations_were_recorded(self):
+        metrics = reporting.step_metrics([FakeEngine(counters(0, 0, 0))], True, 7.0, 10.0)
+        assert "spec/favourable_iteration_fraction" not in metrics
+        assert "spec/engine_iterations" not in metrics
+
+
 def counters(num_drafts, num_draft_tokens, num_accepted_tokens):
     return {"num_drafts": num_drafts, "num_draft_tokens": num_draft_tokens, "num_accepted_tokens": num_accepted_tokens}
 

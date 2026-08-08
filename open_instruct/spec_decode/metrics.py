@@ -49,6 +49,13 @@ logger = logger_utils.setup_logger(__name__)
 _INSTANCES: dict[int, SpecDecodeStatLogger] = {}
 _LOCK = threading.Lock()
 
+#: Upper edges of the concurrency histogram, in running requests per engine iteration. Chosen to
+#: straddle the regimes the batch-scaling measurement found rather than to be evenly spaced: the
+#: interesting boundary is around 64-256, where the cost of extra tokens per forward goes from
+#: nearly free to nearly linear. The last bucket is open-ended above 768, the documented rollout
+#: shape (48 prompts x 16 samples).
+CONCURRENCY_BUCKETS = (8, 16, 32, 64, 128, 256, 512, 768, 1 << 30)
+
 
 class SpecDecodeStatLogger(StatLoggerBase):
     """Accumulates speculative-decoding counters until drained.
@@ -73,6 +80,9 @@ class SpecDecodeStatLogger(StatLoggerBase):
         self.num_draft_tokens = 0
         self.num_accepted_tokens = 0
         self.num_accepted_tokens_per_pos = [0] * self.num_spec_tokens
+        self.concurrency_buckets = dict.fromkeys(CONCURRENCY_BUCKETS, 0)
+        self.num_iterations = 0
+        self.running_reqs_total = 0
 
     def record(
         self,
@@ -83,6 +93,27 @@ class SpecDecodeStatLogger(StatLoggerBase):
     ) -> None:
         if scheduler_stats is None:
             return
+
+        # CONCURRENCY, RECORDED WHETHER OR NOT ANYTHING IS BEING DRAFTED, because it is the
+        # measurement that decides whether drafting is worth doing at all. Verifying k+1 tokens
+        # for B sequences costs roughly what a decode forward for B*(k+1) sequences costs, so the
+        # batch-scaling curve of this model *is* its verification-cost curve. Measured on A100
+        # TP=2: quadrupling tokens per forward costs 1.40x at B=16 but 2.89x at B=256, which puts
+        # break-even acceptance length near 1.4 in the first regime and near 3.9 in the second --
+        # and EAGLE-3 realistically reaches 2.7-3.3 (arXiv:2604.26779 Tables 3-5). So speculation
+        # pays exactly to the extent that a real rollout runs at low concurrency, which a
+        # fixed-length benchmark cannot show and a real RL step can: answers finish at staggered
+        # times, so the tail of every step drains toward small batches.
+        running = scheduler_stats.num_running_reqs
+        self.num_iterations += 1
+        self.running_reqs_total += running
+        for bucket in CONCURRENCY_BUCKETS:
+            if running <= bucket:
+                self.concurrency_buckets[bucket] += 1
+                break
+        else:
+            self.concurrency_buckets[CONCURRENCY_BUCKETS[-1]] += 1
+
         stats = scheduler_stats.spec_decoding_stats
         if stats is None:
             # Either speculative decoding is off, or this iteration drafted nothing. Both are
@@ -116,6 +147,9 @@ class SpecDecodeStatLogger(StatLoggerBase):
         num_draft_tokens = self.num_draft_tokens
         num_accepted = self.num_accepted_tokens
         per_pos = list(self.num_accepted_tokens_per_pos)
+        buckets = dict(self.concurrency_buckets)
+        num_iterations = self.num_iterations
+        running_total = self.running_reqs_total
         self._reset()
 
         out: dict[str, Any] = {
@@ -124,6 +158,9 @@ class SpecDecodeStatLogger(StatLoggerBase):
             "num_accepted_tokens": num_accepted,
             "acceptance_length": None,
             "draft_acceptance_rate": None,
+            "num_iterations": num_iterations,
+            "running_reqs_total": running_total,
+            "concurrency_buckets": buckets,
         }
         if num_drafts > 0:
             # vLLM's own definition, bonus token included, so this matches its log line.
@@ -152,6 +189,13 @@ def drain_all() -> dict[str, Any]:
     num_drafts = sum(d["num_drafts"] for d in drained)
     num_draft_tokens = sum(d["num_draft_tokens"] for d in drained)
     num_accepted = sum(d["num_accepted_tokens"] for d in drained)
+    num_iterations = sum(d["num_iterations"] for d in drained)
+    running_total = sum(d["running_reqs_total"] for d in drained)
+
+    buckets: dict[int, int] = dict.fromkeys(CONCURRENCY_BUCKETS, 0)
+    for d in drained:
+        for edge, count in d["concurrency_buckets"].items():
+            buckets[edge] = buckets.get(edge, 0) + count
 
     combined: dict[str, Any] = {
         "num_drafts": num_drafts,
@@ -159,6 +203,15 @@ def drain_all() -> dict[str, Any]:
         "num_accepted_tokens": num_accepted,
         "acceptance_length": (1 + num_accepted / num_drafts) if num_drafts > 0 else None,
         "draft_acceptance_rate": (num_accepted / num_draft_tokens) if num_draft_tokens > 0 else None,
+        "num_iterations": num_iterations,
+        # The raw total travels alongside the mean, because callers aggregate across Ray actors and
+        # a mean of per-actor means is not the mean unless every actor ran the same number of
+        # iterations. Mean is over *engine iterations*, not requests: an iteration is one forward
+        # pass, so this is the average number of sequences a forward carried, which is what the
+        # verification-cost curve is indexed by.
+        "running_reqs_total": running_total,
+        "mean_running_reqs": (running_total / num_iterations) if num_iterations > 0 else None,
+        "concurrency_buckets": buckets,
     }
     return combined
 

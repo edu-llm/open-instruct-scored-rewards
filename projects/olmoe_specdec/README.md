@@ -82,6 +82,57 @@ Two design points that are not free choices:
 
 There is no pretrained EAGLE-3 draft for OLMoE to fall back on.
 
+### 3b. The RLVR probe — the experiment that actually decides this
+
+`submissions/rlvr-probe-a100.json`. A **real** `grpo_fast.py` RLVR run on the real recipe —
+`OLMoE-1B-7B-0125-DPO`, `allenai/RLVR-GSM`, tulu template, 48 prompts × 16 samples, `beta 0.01`,
+verifiable reward — for 20 steps (`total_episodes 15360`). No draft model, and none needed.
+
+**Why a real run rather than another benchmark, and why it is decisive.** Verifying `k+1` tokens
+for `B` sequences costs about what a decode forward at `B·(k+1)` costs, so this model's
+batch-scaling curve *is* its verification-cost curve. From the 2026-08-08 A100 TP=2 sweep:
+
+| tokens per forward | measured cost | break-even acceptance length |
+|---|---|---|
+| batch 16 → 64 (4×) | 1.40× | ≈ 1.4 |
+| batch 256 → 768 (3×) | 2.89× | ≈ 3.9 |
+
+EAGLE-3 realistically reaches α of 2.7–3.3 in-domain (paper Tables 3–5). So it wins comfortably
+in the first regime and **cannot win** in the second. Everything therefore hinges on *how much of
+a real rollout runs at low concurrency* — and that is the one thing a fixed-length benchmark
+cannot tell you, because forcing `min_tokens = max_tokens` holds every sequence alive to the end
+and reports a single, maximal concurrency.
+
+A real RLVR-GSM step does not behave that way. Answers are short, they stop on `</answer>` at
+different times, and the step drains from its nominal 768 toward zero. The draining tail is
+exactly the cheap-verification regime. So the fixed-length sweep is a *lower* bound on
+speculation's value, and the probe measures the real thing.
+
+**What it produces**, all already instrumented, no draft required:
+
+| metric | what it settles |
+|---|---|
+| `spec/generation_share` | R_gen, the Amdahl ceiling, on the real recipe |
+| `spec/mean_running_reqs` | mean sequences per forward pass |
+| `spec/favourable_iteration_fraction` | fraction of forwards at or below concurrency 64 |
+| `spec/concurrency_le_*` | the full histogram, so the profile is visible rather than summarised |
+| `batch/response_lengths` | the real length distribution (upstream already logs this) |
+
+**Reading it.** With `f` the favourable fraction, speculation's generation speedup is roughly
+`f · (α / 1.40) + (1 − f) · (α / 3.9)`, bounded above by the paper's §2.2 step bound at the
+measured R_gen. Concretely at α = 3: `f = 0.5` gives ≈ 1.4× on generation; `f = 0.1` gives ≈ 0.9×,
+i.e. a **loss**. So `f` is the number to look at first, and there is a defensible no-go threshold
+before any draft is trained.
+
+**Config is pinned, and R_gen is a property of it, not of the model.** 6 learners + 1 engine at
+TP=2 fills the 8 A100s; ZeRO-3 because ZeRO-2 plus a reference policy does not fit in 40 GB per
+card. Changing the learner/engine split moves R_gen, so it has to be re-measured if that changes —
+which is cheap, and is why this probe exists as a repeatable thing rather than a one-off.
+
+Evals and model saves are pushed past the run (`--local_eval_every 1000`, `--save_freq 1000`) so
+that every measured step is a steady-state step; their cost is real but is accounted separately in
+the projection rather than smeared into per-step timing. `--use_vllm_logprobs` stays off.
+
 ### 4. The gate
 
 Sweep `k ∈ {1, 3, 5}` × batch size × response length, autoregressive vs EAGLE-3, through
