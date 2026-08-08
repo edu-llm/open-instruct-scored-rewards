@@ -39,7 +39,10 @@ There are four deliberate adaptations:
 
 The model's `0.01` load-balancing auxiliary loss and the original OLMoE `0.001`
 router z-loss are retained. Gradient checkpointing and DeepSpeed ZeRO-3 reduce
-memory use.
+memory use. Training references are deleted immediately after backward, and
+unused CUDA allocator blocks are released after each optimizer step. This
+cache release is conservative and may reduce throughput; set
+`EMPTY_CACHE_STEPS=0` to disable it after memory behavior is established.
 
 ## Sweep
 

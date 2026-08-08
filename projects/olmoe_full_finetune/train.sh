@@ -68,6 +68,7 @@ train_args=(
     --output_dir "$OUTPUT_DIR"
     --checkpointing_steps "$CHECKPOINTING_STEPS"
     --keep_last_n_checkpoints 1
+    --empty_cache_steps "${EMPTY_CACHE_STEPS:-1}"
     --seed "$SEED"
 )
 

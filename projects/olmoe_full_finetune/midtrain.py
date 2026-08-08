@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import random
-import shutil
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,6 +21,7 @@ from torch.utils.data import DataLoader, IterableDataset
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, get_scheduler, set_seed
 
 from open_instruct.model_utils import save_with_accelerate
+from open_instruct.utils import clean_last_n_checkpoints, get_last_checkpoint
 
 DEFAULT_CONFIGS = ["dclm", "flan", "pes2o", "wiki", "stackexchange", "math"]
 # Published 50B-token Dolmino stage-2 mixture. Values sum to 1.0001 because
@@ -116,6 +116,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--router_z_loss_coef", type=float, default=0.001)
     parser.add_argument("--checkpointing_steps", type=int, default=20)
     parser.add_argument("--keep_last_n_checkpoints", type=int, default=1)
+    parser.add_argument(
+        "--empty_cache_steps",
+        type=int,
+        default=1,
+        help="Release unused CUDA allocator blocks every N optimizer steps; 0 disables it.",
+    )
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument("--run_name", required=True)
     parser.add_argument("--seed", type=int, default=42)
@@ -128,16 +134,9 @@ def parse_args() -> argparse.Namespace:
         parser.error("--dataset_configs and --mix_probabilities must have the same length")
     if any(probability <= 0 for probability in args.mix_probabilities):
         parser.error("all mixture probabilities must be positive")
+    if args.empty_cache_steps < 0:
+        parser.error("--empty_cache_steps must be non-negative")
     return args
-
-
-def complete_checkpoints(output_dir: Path) -> list[Path]:
-    checkpoints = [
-        path
-        for path in output_dir.glob("step_*")
-        if path.is_dir() and (path / "COMPLETED").is_file() and path.name.removeprefix("step_").isdigit()
-    ]
-    return sorted(checkpoints, key=lambda path: int(path.name.removeprefix("step_")))
 
 
 def save_checkpoint(
@@ -156,8 +155,7 @@ def save_checkpoint(
     accelerator.wait_for_everyone()
 
     if accelerator.is_main_process:
-        for stale_checkpoint in complete_checkpoints(output_dir)[:-keep_last_n]:
-            shutil.rmtree(stale_checkpoint)
+        clean_last_n_checkpoints(str(output_dir), keep_last_n)
     accelerator.wait_for_everyone()
 
 
@@ -219,6 +217,13 @@ def main() -> None:
         mixed_precision="bf16",
         log_with="wandb" if args.with_tracking else None,
     )
+    if accelerator.state.deepspeed_plugin is not None:
+        deepspeed_config = accelerator.state.deepspeed_plugin.deepspeed_config
+        deepspeed_config["train_micro_batch_size_per_gpu"] = args.per_device_train_batch_size
+        deepspeed_config["gradient_accumulation_steps"] = args.gradient_accumulation_steps
+        deepspeed_config["train_batch_size"] = (
+            args.per_device_train_batch_size * args.gradient_accumulation_steps * accelerator.num_processes
+        )
     set_seed(args.seed)
 
     if args.with_tracking:
@@ -236,8 +241,8 @@ def main() -> None:
         seed=args.seed,
     )
 
-    resume_checkpoint = complete_checkpoints(args.output_dir)
-    resume_checkpoint = resume_checkpoint[-1] if resume_checkpoint else None
+    resume_checkpoint = get_last_checkpoint(str(args.output_dir))
+    resume_checkpoint = Path(resume_checkpoint) if resume_checkpoint is not None else None
     completed_steps = 0
     if resume_checkpoint is not None:
         stream_state_path = resume_checkpoint / f"stream_state_rank{accelerator.process_index}.pt"
@@ -322,7 +327,7 @@ def main() -> None:
             running_aux_loss += outputs.aux_loss.detach().float()
             running_z_loss += z_loss.detach().float()
             micro_steps += 1
-            del outputs
+            del batch, loss, outputs, z_loss
 
             if not accelerator.sync_gradients:
                 continue
@@ -357,6 +362,8 @@ def main() -> None:
 
             if completed_steps % args.checkpointing_steps == 0 or completed_steps == args.max_train_steps:
                 save_checkpoint(accelerator, stream, args.output_dir, completed_steps, args.keep_last_n_checkpoints)
+            if args.empty_cache_steps and completed_steps % args.empty_cache_steps == 0:
+                torch.cuda.empty_cache()
             if completed_steps >= args.max_train_steps:
                 break
 
