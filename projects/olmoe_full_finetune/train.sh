@@ -53,8 +53,6 @@ train_args=(
     --tokenizer_name_or_path "$TOKENIZER"
     --tokenizer_revision "$TOKENIZER_REVISION"
     --use_slow_tokenizer False
-    --chat_template_name tulu
-    --add_bos
     --dataset_mixer_list "$DATASET" 1.0
     --dataset_mixer_list_splits train
     --dataset_local_cache_dir "$DATASET_CACHE"
