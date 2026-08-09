@@ -76,7 +76,8 @@ def _try_get_rope(rp: Any) -> str:
     from vllm.model_executor.layers.rotary_embedding import get_rope  # noqa: PLC0415
 
     try:
-        get_rope(64, rotary_dim=64, max_position=4096, rope_parameters=rp)
+        # Exact olmo2.py:146 call shape: head_size positional, max_position kw, rope_parameters kw.
+        get_rope(64, max_position=4096, rope_parameters=rp)
         return "get_rope OK"
     except Exception as e:  # noqa: BLE001
         return f"get_rope RAISED {type(e).__name__}: {e}"
