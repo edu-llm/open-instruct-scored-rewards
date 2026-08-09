@@ -1,0 +1,29 @@
+# A distribution that exists only to carry one entry point.
+#
+# The repository itself is not installed in the platform image -- the Dockerfile COPYs the tree and
+# sets PYTHONPATH -- so `importlib.metadata` finds no entry points for it, and vLLM's plugin
+# discovery comes up empty. Rather than make the whole repository installable (which would drag in
+# setuptools_scm, and .git is excluded by .dockerignore, so the version could not be computed), this
+# installs a single module whose only job is to point vLLM at code that stays on PYTHONPATH.
+#
+# Deliberately declares NO dependencies. vllm and open_instruct are both already present wherever
+# this is installed, and naming them here would invite pip to resolve or reinstall them and disturb
+# a dependency set that was pinned deliberately.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "olmoe-vllm-plugin"
+version = "0.1.0"
+description = "Registers open-instruct's OLMoE model override with vLLM in every process"
+requires-python = ">=3.10"
+dependencies = []
+
+# The group vLLM loads in process0, the engine core process and the worker processes.
+# See vllm/plugins/__init__.py: DEFAULT_PLUGINS_GROUP = "vllm.general_plugins".
+[project.entry-points."vllm.general_plugins"]
+olmoe_eagle3 = "olmoe_vllm_plugin:register"
+
+[tool.setuptools]
+py-modules = ["olmoe_vllm_plugin"]

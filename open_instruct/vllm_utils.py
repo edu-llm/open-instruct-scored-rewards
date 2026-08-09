@@ -1353,13 +1353,9 @@ def create_vllm_engines(
                         "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
                         "TORCH_CUDA_ARCH_LIST": get_cuda_arch_list(),
                         "RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO": "0",
-                        # Makes sitecustomize.py register the OLMoE override in this actor AND in
-                        # the processes that actually build the model. AsyncLLM runs EngineCore as
-                        # a subprocess with its own TP workers below it, so registering only in the
-                        # actor registers in the one process that never instantiates a model --
-                        # which is how run_019fe36d passed assert_registered() and still hit
-                        # upstream's loader in all four workers. Subprocesses inherit this env.
-                        "OPEN_INSTRUCT_REGISTER_OLMOE": "1",
+                        # The OLMoE override reaches EngineCore and its workers through the
+                        # vllm.general_plugins entry point in packaging/olmoe_vllm_plugin, which
+                        # vLLM loads in every process. Nothing is needed here for it.
                     }
                 ),
             )

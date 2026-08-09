@@ -104,6 +104,24 @@ RUN pip install --no-cache-dir boto3 "botocore[crt]" \
 
 COPY . /opt/open-instruct
 
+# ONE ENTRY POINT, WHICH IS THE ONLY WAY TO REACH vLLM'S SUBPROCESSES. vLLM resolves a model
+# architecture through a per-process ModelRegistry, and under AsyncLLM the model is built in
+# neither this image's entrypoint nor the Ray actor: EngineCore is a subprocess and its
+# tensor-parallel workers are children of that. An override registered anywhere else is registered
+# in a process that never instantiates a model.
+#
+# vllm.general_plugins is loaded by vLLM in every one of those processes at the point in its own
+# startup where importing vLLM machinery is safe, and it is discovered through installed
+# distribution metadata -- which this image otherwise has none of, because it COPYs the tree and
+# sets PYTHONPATH instead of installing it. Hence one tiny package carrying one entry point.
+#
+# --no-deps because it declares none and none are wanted: vllm and open_instruct are already here,
+# and letting pip resolve would risk disturbing a dependency set pinned above on purpose.
+# The import is asserted at build time so a broken plugin fails here rather than as a model that
+# quietly loads through vLLM's own class an hour into a GPU run.
+RUN pip install --no-cache-dir --no-deps /opt/open-instruct/packaging/olmoe_vllm_plugin \
+ && python -c "import importlib.metadata as m; eps=[e for e in m.entry_points(group='vllm.general_plugins')]; assert any(e.name=='olmoe_eagle3' for e in eps), f'entry point missing, found {eps}'; print('vllm.general_plugins:', [e.name for e in eps])"
+
 # THE MODEL WEIGHTS ARE NOT BAKED IN. OLMo-2-7B-Instruct is about 15GB, which would take
 # this image past what a standard GitHub runner can build, and the Batch instances sit in
 # public subnets with a route to an internet gateway, so the container fetches them from
