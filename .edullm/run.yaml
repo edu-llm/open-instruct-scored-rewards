@@ -1,42 +1,18 @@
-# Written by edullm check, from config/workload-catalog.yaml in /home/tom/code/alpha/eduLLM/platform/config.
-# Everything here is a property of the code and travels with it in git.
-# The machine, the corpus and the experiment are supplied at submit time,
-# because one commit run by two people belongs to two teams.
-#
-# Workload profiles registered for open-instruct-scored-rewards: open-instruct-scored-rewards-check, open-instruct-scored-rewards-train.
-# edullm check prices this and lists every refusal, without dispatching anything.
 schema_version: 1
-# PRM-vs-ORM Stages 3-4: train BOTH reward models from the shared Stage-2 SFT init, in ONE
-# gpu-8xa100 job, sequentially (ORM then PRM). run_rm.py downloads the SFT model dir and the
-# Stage-1 scored-data file, accelerate-launches reward_modeling_scored.py (one rank per GPU),
-# and uploads each RM to a distinct subprefix of this run's checkpoint dir for Stage 5
-# (best-of-N gate) and Stage 6/7 (the GRPO reward bridge).
-#   ORM: 1-logit BCE on whole-solution correctness (last-token score).
-#   PRM: 3-logit CE at step boundaries, neutral-counts-as-positive at scoring time.
-# GPU stage: needs the GPU workload role (reads prior-run outputs) and W&B is auto-wired by
-# that role. -train because it READS prior outputs and WRITES its own.
+# PRM-vs-ORM Stage 5: best-of-N go/no-go gate. Sample N solutions/problem from the Stage-2 SFT
+# policy (vLLM) on a GSM8K test slice, then rank by ORM (last-token P(correct)), by PRM (product
+# of per-step P(correct)), and by majority vote; report best-of-N accuracy, SFT-greedy and pass@N.
+# Decision: if neither RM's best-of-N beats majority AND SFT-greedy, the RMs add no ranking signal
+# -> stop before spending GPU on GRPO. Prints "BON GATE: GO/NO-GO" and uploads bon_report.json.
+# Single process : single L40S (bf16 in hardware), so no EDULLM_LAUNCH_CHECK waiver. Reads prior
+# runs' outputs (SFT run_019fdfac, RM run_019fe395, data run_019fdd78) via the GPU job role, writes
+# its report to this run's checkpoint dir -> -train profile. dtype bf16 is set in code; L40S has it.
 workload_profile: open-instruct-scored-rewards-train
-# gpu-8xa100 IS provisioned and places "after_a_wait", 8x A100 80GiB bf16. Two 1-epoch 370M RM
-# trainings (ORM ~88k rows, PRM per-step rows) run sequentially in one job, comfortably under the
-# 6h/stage target on 8-way DP. Overridable at submit with --compute.
-suggested_compute: gpu-8xa100
-# run_rm.py is a single ORCHESTRATOR process (S3 download/upload the platform doesn't) that
-# INTERNALLY `accelerate launch`es one rank per visible GPU. The platform's per-device launch
-# check reads only this outer command and sees one process against 8 GPUs, so we mark the single
-# top-level process as deliberate with EDULLM_LAUNCH_CHECK=waived (the sanctioned "launcher is
-# inside the wrapper" marker). The check attributes an INLINE env-prefix (VAR=val python ...) to
-# the launched process, not a preceding `export`, so the waiver rides directly on each python
-# invocation (same form the Stage-2 SFT command used).
-# ${EDULLM_CHECKPOINT_DIR%/} strips any trailing slash so the /orm and /prm subprefixes are clean
-# single-slash S3 keys that Stage 5/6 list under. dtype named in the command so the precision
-# guard sees bf16 (A100 has it). --sft-uri = Stage-2 SFT output; --data-uri = Stage-1 scored data.
+suggested_compute: gpu-1xl40s
 command: >-
-  bash -lc 'O="${EDULLM_CHECKPOINT_DIR%/}";
-  EDULLM_LAUNCH_CHECK=waived python projects/prm_vs_orm/run_rm.py --rm-type orm
+  bash -lc 'python projects/prm_vs_orm/bon_eval.py
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
-  --data-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/orm.jsonl
-  --out "$O/orm" --dtype bfloat16
-  && EDULLM_LAUNCH_CHECK=waived python projects/prm_vs_orm/run_rm.py --rm-type prm
-  --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
-  --data-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prm.jsonl
-  --out "$O/prm" --dtype bfloat16'
+  --orm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/orm
+  --prm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/prm
+  --eval-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/eval_gsm8k.jsonl
+  --out "$EDULLM_CHECKPOINT_DIR" --dataset gsm8k'
