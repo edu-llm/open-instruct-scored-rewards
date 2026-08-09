@@ -1,20 +1,22 @@
 schema_version: 1
-# PRM-vs-ORM Stage 5: best-of-N go/no-go gate. Sample N solutions/problem from the Stage-2 SFT
-# policy (vLLM) on a GSM8K test slice, then rank by ORM (last-token P(correct)), by PRM (product
-# of per-step P(correct)), and by majority vote; report best-of-N accuracy, SFT-greedy and pass@N.
-# Decision: if neither RM's best-of-N beats majority AND SFT-greedy, the RMs add no ranking signal
-# -> stop before spending GPU on GRPO. Prints "BON GATE: GO/NO-GO" and uploads bon_report.json.
+# PRM-vs-ORM Stage A (on-policy RM data): the re-gate recommendation. The first RMs (PRM800K /
+# GPT-4 solutions) failed the Stage-5 gate on distribution shift, so regenerate RM training data
+# ON-POLICY -- sample solutions from THIS 370M SFT policy (vLLM) on GSM8K train prompts and label
+# them with the ground-truth checker: whole-solution outcome (GSM8KVerifier) for ORM, and per-step
+# Math-Shepherd Monte-Carlo values (roll out M continuations per step prefix, value = fraction
+# reaching the correct answer, thresholded to -1/0/+1) for PRM. Writes orm.jsonl / prm.jsonl /
+# MANIFEST.json in the exact schemas run_rm.py already reads, so Stages 3-4 retrain unchanged.
 # Single process : single L40S (bf16 in hardware), so no EDULLM_LAUNCH_CHECK waiver. Reads prior
-# runs' outputs (SFT run_019fdfac, RM run_019fe395, data run_019fdd78) via the GPU job role, writes
-# its report to this run's checkpoint dir -> -train profile. dtype bf16 is set in code; L40S has it.
+# runs' outputs (SFT run_019fdfac, data run_019fdd78) via the GPU job role, writes its corpora to
+# this run's checkpoint dir -> -train profile. dtype bf16 is set in code; L40S has it.
 # VLLM_LOGGING_LEVEL=WARNING silences vLLM's INFO flood so the rm_common [rope-fix]/verify lines and
-# the final "BON GATE" verdict survive in the ~50-line `edullm logs` tail.
+# the final "GEN_ONPOLICY OK" manifest survive in the ~50-line `edullm logs` tail (printed LAST).
 #
 # vLLM + the image's broken FlashInfer JIT toolchain (cu13 nvcc emits PTX .version 9.3 but its bundled
-# ptxas is 9.0, and the <nv/target> header is absent). Two runs (019fe834, 019fe848) died at EngineCore
-# init compiling FlashInfer *sampling* kernels (renorm.cu / sampling.cu / flashinfer_sampling_binding.cu),
-# NOT attention -- setting VLLM_ATTENTION_BACKEND=TRITON_ATTN did not change the failure. Root cause:
-# in vLLM 0.19.1 the ONLY code path that calls into flashinfer.sampling is TopKTopPSampler.forward_cuda,
+# ptxas is 9.0, and the <nv/target> header is absent). Two earlier runs (019fe834, 019fe848) died at
+# EngineCore init compiling FlashInfer *sampling* kernels (renorm.cu / sampling.cu / binding.cu), NOT
+# attention -- setting VLLM_ATTENTION_BACKEND=TRITON_ATTN did not change the failure. Root cause: in
+# vLLM 0.19.1 the ONLY code path that calls into flashinfer.sampling is TopKTopPSampler.forward_cuda,
 # gated by VLLM_USE_FLASHINFER_SAMPLER; the vLLM default is None (-> forward_native, pure Triton/PyTorch
 # top-k/top-p, no flashinfer), but the image env sets it truthy for the 7B Olmo3 RL recipes. Force
 # VLLM_USE_FLASHINFER_SAMPLER=0 (bool(int("0"))==False) to override the image and select forward_native
@@ -23,9 +25,8 @@ schema_version: 1
 workload_profile: open-instruct-scored-rewards-train
 suggested_compute: gpu-1xl40s
 command: >-
-  bash -lc 'VLLM_LOGGING_LEVEL=WARNING VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN python projects/prm_vs_orm/bon_eval.py
+  bash -lc 'VLLM_LOGGING_LEVEL=WARNING VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN python projects/prm_vs_orm/gen_onpolicy.py
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
-  --orm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/orm
-  --prm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/prm
-  --eval-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/eval_gsm8k.jsonl
-  --out "$EDULLM_CHECKPOINT_DIR" --dataset gsm8k'
+  --prompts-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_gsm8k.jsonl
+  --out "$EDULLM_CHECKPOINT_DIR"
+  --num-problems 1200 --n-samples 16 --mc-rollouts 4 --prm-pos-trajs 2 --prm-neg-trajs 2 --prm-max-steps 8'
