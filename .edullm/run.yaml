@@ -1,20 +1,12 @@
 schema_version: 1
-# PRM-vs-ORM Stage 5: best-of-N go/no-go gate. Sample N solutions/problem from the Stage-2 SFT
-# policy (vLLM) on a GSM8K test slice, then rank by ORM (last-token P(correct)), by PRM (product
-# of per-step P(correct)), and by majority vote; report best-of-N accuracy, SFT-greedy and pass@N.
-# Decision: if neither RM's best-of-N beats majority AND SFT-greedy, the RMs add no ranking signal
-# -> stop before spending GPU on GRPO. Prints "BON GATE: GO/NO-GO" and uploads bon_report.json.
-# Single process : single L40S (bf16 in hardware), so no EDULLM_LAUNCH_CHECK waiver. Reads prior
-# runs' outputs (SFT run_019fdfac, RM run_019fe395, data run_019fdd78) via the GPU job role, writes
-# its report to this run's checkpoint dir -> -train profile. dtype bf16 is set in code; L40S has it.
-# VLLM_LOGGING_LEVEL=WARNING silences vLLM's INFO flood so the rm_common [rope-fix]/verify lines and
-# the final "BON GATE" verdict survive in the ~50-line `edullm logs` tail.
+# PRM-vs-ORM rope diagnostic. Reads ONLY the SFT checkpoint's config.json (GPU job role's S3
+# read grant) and replays vLLM's exact config path (get_config -> standardize_rope_params ->
+# olmo2 get_rope) for the raw config + candidate fixes, to find which on-disk config survives
+# vLLM's re-standardization. No model weights are loaded, so gpu-1xt4 (no bf16) suffices and no
+# dtype appears in the command. Reads prior-run outputs via the job role, not a platform corpus
+# -> --dataset none. All findings print after "=== PROBE RESULTS ===" to survive the log tail.
 workload_profile: open-instruct-scored-rewards-train
-suggested_compute: gpu-1xl40s
+suggested_compute: gpu-1xt4
 command: >-
-  bash -lc 'VLLM_LOGGING_LEVEL=WARNING python projects/prm_vs_orm/bon_eval.py
-  --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
-  --orm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/orm
-  --prm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/prm
-  --eval-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/eval_gsm8k.jsonl
-  --out "$EDULLM_CHECKPOINT_DIR" --dataset gsm8k'
+  bash -lc 'python projects/prm_vs_orm/rope_probe.py
+  --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/'
