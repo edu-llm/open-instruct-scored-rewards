@@ -51,6 +51,42 @@ Remaining un-derisked at attempt 2: the memory sizing. 6 learners under ZeRO-3 p
 policy on 40 GB cards is reasoned, not measured, and OLMoE's absent GQA makes KV heavier than
 parameter counts suggest. An OOM would land after the model load, a few minutes in.
 
+## Attempt 5 — `run_019fe75e-af1a-700f-8c91-458dc84bea3e`
+
+**The `KeyError` is gone.** This is the first attempt where the OLMoE override actually reached the
+processes that build the model: the `vllm.general_plugins` entry point loaded it in EngineCore and
+the workers, weight loading no longer fails on fused expert names, and nothing in the log mentions
+`layers.0.mlp.experts.gate_up_proj`. Three attempts' worth of that failure is closed.
+
+What it hit instead, at ~4 minutes:
+
+```
+(Worker_TP1 pid=10211) torch.OutOfMemoryError: CUDA out of memory.
+  Tried to allocate 64.00 MiB. GPU 1 has a total capacity of 39.49 GiB of which 33.44 MiB is free.
+  ... 35.05 GiB is allocated by PyTorch
+(Worker_TP2 pid=10212) same
+```
+
+**A different OOM from attempt 2's**, and the difference matters. Attempt 2 ran out of memory in the
+*learner*, inside `broadcast_to_vllm`, gathering ZeRO-3 shards; `--gather_whole_model false` fixed
+that and it has not recurred. This one is in the *vLLM engine's own TP workers*: the engine sized
+its KV cache to `gpu_memory_utilization` (0.9 default, ~36 GiB of a 40 GiB card) and then had
+nothing left for a 64 MiB allocation.
+
+This is tuning, not a defect. The lever is `--vllm_gpu_memory_utilization`, which the run never set
+and so inherited 0.9. On 40 GB cards shared with a co-located learner that is too aggressive;
+something around 0.7–0.75 leaves 6–8 GiB of headroom. OLMoE's absent GQA makes this worse than the
+parameter count suggests — KV is ~128 KB/token, so the cache is the dominant allocation.
+
+**Fail-fast did not fire, and that is a real gap.** The engine's workers raised, but the job stayed
+`RUNNING`: the abort added after attempt 3 keys on `AsyncLLM.errored`, and a worker-level CUDA OOM
+inside `multiproc_executor` does not necessarily mark the client errored. So the same hang-versus-
+crash ambiguity remains for this class of failure, and the 1-hour cap is still what bounds it.
+A progress-based watchdog -- no step metrics within N minutes, abort -- would close it properly and
+is the right next change to the harness.
+
+Still no `f`, no R_gen: generation never started, so the measurement remains unmade.
+
 ## Attempt 3 — `run_019fe36d-9120-7091-a406-6ff233cf291e`
 
 `FAILED`, exit **15** (SIGTERM), `Job attempt duration exceeded timeout`. Ran the full two-hour
