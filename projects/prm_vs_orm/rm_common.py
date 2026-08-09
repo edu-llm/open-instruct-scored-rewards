@@ -278,11 +278,27 @@ def ensure_vllm_rope_parameters(model_dir: Any, *, fallback_theta: float = OLMO3
     disk is therefore not enough — a top-level ``rope_scaling`` can re-introduce a non-scalar. The
     Olmo3 configs saved through the OLMo-core→HF converter can carry exactly these shapes.
 
+    A gpu-1xt4 probe replayed vLLM's exact config path on the REAL checkpoint config and proved the
+    flat-``rope_parameters`` edit alone is **not** enough: while ``model_type=="olmo3"``,
+    transformers' ``Olmo3Config`` re-injects a per-layer-type **nested** rope
+    (``{"full_attention": {...}, "sliding_attention": {...}}``) into ``config.rope_parameters`` on
+    *every* load regardless of what is on disk, so vLLM's ``get_rope`` still raises ``unhashable type:
+    'dict'``. The only on-disk shape that survives the reload flat-and-hashable is to **re-declare the
+    config as plain olmo2** — ``model_type="olmo2"``, ``architectures=["Olmo2ForCausalLM"]`` — because
+    ``Olmo2Config`` has no per-layer rope to re-nest. vLLM 0.19.1 routes *both* ``Olmo3ForCausalLM``
+    and ``Olmo2ForCausalLM`` to the **same** ``olmo2.py`` kernels and the same ``load_weights``, so
+    this changes only which transformers ``Config`` class parses ``config.json``, not the compute
+    graph or the weights.
+
     Fix, robust to every observed shape: reduce ``rope_parameters`` to **scalar entries only** plus
     ``{"rope_type": "default", "rope_theta": <theta>}``, set top-level ``rope_scaling`` to ``null``
-    (removing the merge source), and set top-level ``rope_theta`` to the same scalar. For olmo3_370M
-    the sliding and full layers share one theta with no RoPE scaling, so this is exact, not an
-    approximation. Then (``verify``) reload via ``AutoConfig`` and prove the ``get_rope`` key hashes.
+    (removing the merge source), set top-level ``rope_theta`` to the same scalar, re-declare
+    ``model_type``/``architectures`` as olmo2, and drop ``layer_types``/``sliding_window`` (making
+    every layer full-attention). For olmo3_370M the sliding and full layers share one theta with no
+    RoPE scaling, and sliding-window attention is bit-for-bit identical to full attention for any
+    sequence shorter than the window (4096) — which this experiment's GSM8K+MATH sequences always are
+    — so both rewrites are exact, not approximations. Then (``verify``) reload via ``AutoConfig`` and
+    prove the ``get_rope`` key hashes.
 
     Idempotent: a no-op (returns ``False``) once the config is already in this sanitised form;
     otherwise rewrites and returns ``True``. ``verify`` still runs on a no-op.
@@ -308,12 +324,20 @@ def ensure_vllm_rope_parameters(model_dir: Any, *, fallback_theta: float = OLMO3
     scalar["rope_type"] = "default"
     scalar["rope_theta"] = theta
 
+    # Re-declare as plain olmo2 so transformers' Olmo3Config can't re-nest rope on reload (see the
+    # docstring + the gpu-1xt4 probe: C3 is the only candidate that reloads flat-and-hashable), and
+    # drop the per-layer sliding-window pattern (exact for seqlen < window; see docstring).
+    sliding_window = cfg.get("sliding_window")
     already_sanitised = (
         isinstance(rp_raw, dict)
         and rp == scalar
         and cfg.get("rope_scaling") is None
         and isinstance(cfg.get("rope_theta"), (int, float)) and not isinstance(cfg.get("rope_theta"), bool)
         and float(cfg["rope_theta"]) == theta
+        and cfg.get("model_type") == "olmo2"
+        and cfg.get("architectures") == ["Olmo2ForCausalLM"]
+        and "layer_types" not in cfg
+        and "sliding_window" not in cfg
     )
     changed = not already_sanitised
     if changed:
@@ -321,11 +345,22 @@ def ensure_vllm_rope_parameters(model_dir: Any, *, fallback_theta: float = OLMO3
         cfg["rope_parameters"] = scalar
         cfg["rope_scaling"] = None
         cfg["rope_theta"] = theta
+        cfg["model_type"] = "olmo2"
+        cfg["architectures"] = ["Olmo2ForCausalLM"]
+        cfg.pop("layer_types", None)
+        cfg.pop("sliding_window", None)
         cfg_path.write_text(json.dumps(cfg, indent=2))
         log(f"[rope-fix] sanitised rope_parameters -> {json.dumps(scalar)}; rope_scaling->null; "
-            f"top-level rope_theta={theta} (theta source: {src}); dropped non-scalar {dropped} in {cfg_path}")
+            f"top-level rope_theta={theta} (theta source: {src}); dropped non-scalar {dropped}; "
+            f"re-declared model_type=olmo2 architectures=[Olmo2ForCausalLM]; dropped layer_types + "
+            f"sliding_window={sliding_window!r} (all layers -> full attention) in {cfg_path}")
+        if (isinstance(sliding_window, (int, float)) and not isinstance(sliding_window, bool)
+                and sliding_window < 4096):
+            log(f"[rope-fix] WARNING: sliding_window={sliding_window} is smaller than expected; keep "
+                f"prompt+generation length < {sliding_window} tokens for the full-attention rewrite "
+                f"to stay exact")
     else:
-        log(f"[rope-fix] rope config already sanitised (rope_theta={theta}); no-op")
+        log(f"[rope-fix] rope config already sanitised (rope_theta={theta}, model_type=olmo2); no-op")
 
     if verify:
         _verify_vllm_rope(cfg_path.parent, log=log)
