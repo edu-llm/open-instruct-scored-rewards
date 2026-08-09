@@ -688,9 +688,14 @@ class LLMRayActor:
         #    unfuses them. That makes this a correctness fix for plain runs, not an opt-in.
         #
         # Inert for every other architecture: the registry key is 'OlmoeForCausalLM', so nothing
-        # else resolves through it. Before the engine exists and in this process on purpose -- the
-        # engine core runs here (VLLM_ENABLE_V1_MULTIPROCESSING=0 in the actor's runtime env) and
-        # its workers are forked from it, so a lazy registration made here is what they resolve.
+        # else resolves through it.
+        #
+        # THIS COVERS THIS PROCESS ONLY, AND THIS PROCESS IS NOT WHERE THE MODEL IS BUILT. AsyncLLM
+        # runs EngineCore as a subprocess with its own TP workers beneath it, so the registry that
+        # matters is theirs, and sitecustomize.py is what reaches them. The call here is kept
+        # because it is free, it covers any in-process path, and it fails fast if the override is
+        # broken -- but assert_registered() passing proves nothing about the workers. Reading it
+        # as proof is exactly the mistake that cost run_019fe36d two hours.
         registration.register_olmoe_eagle3()
         registration.assert_registered()
         if bundle_indices is not None:
@@ -1348,6 +1353,13 @@ def create_vllm_engines(
                         "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
                         "TORCH_CUDA_ARCH_LIST": get_cuda_arch_list(),
                         "RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO": "0",
+                        # Makes sitecustomize.py register the OLMoE override in this actor AND in
+                        # the processes that actually build the model. AsyncLLM runs EngineCore as
+                        # a subprocess with its own TP workers below it, so registering only in the
+                        # actor registers in the one process that never instantiates a model --
+                        # which is how run_019fe36d passed assert_registered() and still hit
+                        # upstream's loader in all four workers. Subprocesses inherit this env.
+                        "OPEN_INSTRUCT_REGISTER_OLMOE": "1",
                     }
                 ),
             )
