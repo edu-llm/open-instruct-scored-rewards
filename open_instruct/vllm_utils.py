@@ -741,7 +741,15 @@ class LLMRayActor:
             logger.info(f"Starting vLLM OpenAI API server on port {self.server_port}")
 
             config = uvicorn.Config(app, host="127.0.0.1", port=self.server_port, log_level="warning")
-            asyncio.create_task(uvicorn.Server(config).serve())
+            server = uvicorn.Server(config)
+            # vLLM's engine_error_handler reports an engine failure by reading
+            # `req.app.state.server`. Its own serve_http() sets that (entrypoints/launcher.py),
+            # but we drive uvicorn directly and so never did -- which meant every engine error
+            # was replaced by `AttributeError: 'State' object has no attribute 'server'` raised
+            # from inside the handler, and the actual cause was never printed. Diagnosed on
+            # run_019fe36d, which died at 3.7 minutes and took two hours to say nothing.
+            app.state.server = server
+            asyncio.create_task(server.serve())
 
             # Yield control to allow the server task to start before returning.
             await asyncio.sleep(0.1)
@@ -874,6 +882,17 @@ class LLMRayActor:
         self.current_model_step = model_step
 
     def check_background_threads(self) -> None:
+        # A dead engine is not a background thread, but it strands the run the same way and is
+        # far more expensive. The OpenAI client is built with timeout=3600, so a request against
+        # a dead engine hangs for an hour before it even retries; run_019fe36d spent 116 minutes
+        # doing exactly that and was killed by the runtime cap having measured nothing, while
+        # Batch reported RUNNING throughout because the process was alive and looping.
+        #
+        # AsyncLLM knows it is dead -- `errored` is set and `dead_error` holds the cause -- so
+        # raise that rather than waiting for a timeout to infer it. Checked first, because it is
+        # the condition most likely to be masking the others.
+        if self.llm_engine is not None and getattr(self.llm_engine, "errored", False):
+            raise self.llm_engine.dead_error
         if self._prefetch_future.done():
             self._prefetch_future.result()
         if self._process_future.done():

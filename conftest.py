@@ -19,6 +19,7 @@ if not VLLM_AVAILABLE:
         "open_instruct/spec_decode/test_olmoe_eagle3.py",
         "open_instruct/spec_decode/test_metrics_vllm.py",
         "open_instruct/spec_decode/test_package_imports_vllm.py",
+        "open_instruct/spec_decode/test_engine_liveness.py",
     ])
 if not torch.cuda.is_available():
     collect_ignore.extend(str(p) for p in pathlib.Path("open_instruct").glob("*_gpu.py"))

@@ -8,7 +8,7 @@
   "team": "post-training",
   "experiment": "olmoe-specdec-rlvr-probe",
   "wandb_project": "edullm-p8",
-  "maximum_runtime_hours": "2",
+  "maximum_runtime_hours": "1",
   "maximum_attempts": "1",
   "fanout_size": "",
   "fanout_index_parameter": "",
