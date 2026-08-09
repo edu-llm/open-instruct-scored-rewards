@@ -162,6 +162,55 @@ def pooled_scores(model: Any, input_ids: Any, attention_mask: Any) -> Any:
     return out.logits  # (batch, num_labels) — forward pools at the last real token by mask
 
 
+# Documented RoPE base for the olmo3_370M policy in this experiment: olmo3_370M is built from
+# olmo2_370M (rope_theta=500_000) with a [4096,4096,4096,-1] sliding-window pattern and NO separate
+# local base freq, so sliding-window and full-attention layers share this single theta. Used only as
+# a last-resort fallback when a checkpoint's config declares no theta anywhere — never a fresh guess.
+OLMO3_370M_ROPE_THETA = 500000.0
+
+
+def ensure_vllm_rope_parameters(model_dir: Any, *, fallback_theta: float = OLMO3_370M_ROPE_THETA,
+                                log: Any = print) -> bool:
+    """Guarantee ``config.json``'s ``rope_parameters`` carries ``rope_theta`` for vLLM's olmo2 loader.
+
+    vLLM 0.19.1 routes ``Olmo3ForCausalLM`` to its ``olmo2`` implementation, which on every
+    sliding-window layer reads ``config.rope_parameters["rope_theta"]`` (``olmo2.py:144``) and on
+    full-attention layers hands the whole ``rope_parameters`` dict to ``get_rope``. Some saved Olmo3
+    configs land with a ``rope_parameters`` dict that lacks ``rope_theta`` — transformers loads them
+    fine (it also keeps a top-level ``rope_theta``), but vLLM ``KeyError``s at engine init. This
+    repairs the on-disk config once so every downstream vLLM consumer (bon_eval / grpo_fast rollouts /
+    final eval) loads with a valid, *checkpoint-derived* RoPE base.
+
+    Theta is sourced, in order, from the config's OWN fields — ``rope_parameters.rope_theta`` (already
+    fine → no-op) then top-level ``rope_theta`` — and only if neither exists is ``fallback_theta``
+    (the documented olmo3_370M preset value) used, so the base is never invented. For olmo3_370M the
+    sliding and full layers share one theta, so filling this single key is faithful, not an
+    approximation. Idempotent; returns True iff it rewrote the file.
+    """
+    import json  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    cfg_path = Path(model_dir) / "config.json"
+    if not cfg_path.exists():
+        log(f"[rope-fix] no config.json under {model_dir}; skipping")
+        return False
+    cfg = json.loads(cfg_path.read_text())
+    rp = dict(cfg["rope_parameters"]) if isinstance(cfg.get("rope_parameters"), dict) else {}
+    if rp.get("rope_theta") is not None:
+        log(f"[rope-fix] rope_parameters.rope_theta already set ({rp['rope_theta']}); no-op")
+        return False
+    if cfg.get("rope_theta") is not None:
+        theta, src = cfg["rope_theta"], "top-level rope_theta"
+    else:
+        theta, src = fallback_theta, "fallback (olmo3_370M preset)"
+    rp.setdefault("rope_type", "default")
+    rp["rope_theta"] = theta
+    cfg["rope_parameters"] = rp
+    cfg_path.write_text(json.dumps(cfg, indent=2))
+    log(f"[rope-fix] set rope_parameters.rope_theta={theta} (source: {src}) in {cfg_path}")
+    return True
+
+
 class _FakeTokenizer:
     """Whitespace tokenizer for offline selftests: ids are char lengths of split tokens."""
 
@@ -195,7 +244,29 @@ def _selftest() -> None:
     ids_full = encode_exchange(tok, "p", "a b c d e", add_bos=False, max_length=999)
     ids_trunc = encode_exchange(tok, "p", "a b c d e", add_bos=False, max_length=3)
     assert ids_trunc == ids_full[-3:], (ids_trunc, ids_full)
-    print("RM_COMMON SELFTEST OK: tulu encoding, label maps, truncation verified")
+    # rope_parameters repair for vLLM's olmo2 loader (no torch/network needed).
+    import json as _json  # noqa: PLC0415
+    import tempfile as _tf  # noqa: PLC0415
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    _d = _tf.mkdtemp()
+    _cfg = _Path(_d) / "config.json"
+    _quiet = lambda *a, **k: None  # noqa: E731
+    # legacy top-level rope_theta but no rope_parameters -> filled from top-level, idempotent
+    _cfg.write_text(_json.dumps({"model_type": "olmo3", "rope_theta": 500000.0}))
+    assert ensure_vllm_rope_parameters(_d, log=_quiet) is True
+    _got = _json.loads(_cfg.read_text())["rope_parameters"]
+    assert _got["rope_theta"] == 500000.0 and _got["rope_type"] == "default", _got
+    assert ensure_vllm_rope_parameters(_d, log=_quiet) is False  # second call is a no-op
+    # rope_parameters present but missing theta -> sourced from top-level rope_theta
+    _cfg.write_text(_json.dumps({"rope_parameters": {"rope_type": "default"}, "rope_theta": 12345.0}))
+    assert ensure_vllm_rope_parameters(_d, log=_quiet) is True
+    assert _json.loads(_cfg.read_text())["rope_parameters"]["rope_theta"] == 12345.0
+    # nothing declared anywhere -> documented fallback, never left unset
+    _cfg.write_text(_json.dumps({"model_type": "olmo3"}))
+    assert ensure_vllm_rope_parameters(_d, fallback_theta=777.0, log=_quiet) is True
+    assert _json.loads(_cfg.read_text())["rope_parameters"]["rope_theta"] == 777.0
+    print("RM_COMMON SELFTEST OK: tulu encoding, label maps, truncation, rope-fix verified")
 
 
 if __name__ == "__main__":

@@ -304,6 +304,9 @@ def main() -> None:
     sft_dir, orm_dir, prm_dir = "/tmp/bon_sft", "/tmp/bon_orm", "/tmp/bon_prm"
     print(f"downloading SFT {args.sft_uri} ...", flush=True)
     download_prefix(s3, args.sft_uri, sft_dir)
+    # vLLM's olmo2 loader reads config.rope_parameters["rope_theta"]; ensure the SFT config carries
+    # it (some saved Olmo3 configs omit it) so the engine initialises with the checkpoint's own base.
+    rm_common.ensure_vllm_rope_parameters(sft_dir)
     print(f"downloading ORM {args.orm_uri} ...", flush=True)
     download_prefix(s3, args.orm_uri, orm_dir)
     print(f"downloading PRM {args.prm_uri} ...", flush=True)
