@@ -173,6 +173,50 @@ def write_jsonl_s3(s3: Any, out_prefix: str, name: str, rows: list[dict]) -> str
     return uri
 
 
+def _parse_prompt_blob(raw: bytes, uri: str) -> list[dict]:
+    """Tolerantly parse a prompts corpus into a list of objects, and self-diagnose on failure.
+
+    The corpus is written one JSON object per line (``write_jsonl_s3``), but a first Stage-A run
+    died with ``Unterminated string ... line 1 column 13`` -- the exact signature of either a raw
+    control char inside the first string value or a short/truncated object, which the error alone
+    cannot tell apart. So instead of ``splitlines()`` + strict ``json.loads`` (which rejects both),
+    parse with a single streaming ``JSONDecoder(strict=False)`` over the whole blob: ``strict=False``
+    admits literal control chars inside strings, and ``raw_decode`` finds object boundaries by JSON
+    structure rather than by physical newlines, so an embedded newline no longer splits a row. A
+    leading ``[`` is treated as a single top-level array. If nothing parses, raise with the actual
+    on-disk head (byte length + repr of the first bytes) so one re-run reveals a genuine truncation
+    via ``edullm logs`` -- no direct S3 read needed.
+    """
+    text = raw.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    print(f"[prompts] {uri}: {len(raw)} bytes, head={text[:160]!r}", flush=True)
+    if not stripped:
+        raise ValueError(f"empty prompts corpus at {uri} ({len(raw)} bytes)")
+    dec = json.JSONDecoder(strict=False)
+    # A single top-level JSON array (pretty-printed export), if that is what we got.
+    if stripped[0] == "[":
+        obj = dec.decode(stripped)
+        if isinstance(obj, list):
+            return [r for r in obj if isinstance(r, dict)]
+    # Otherwise stream consecutive JSON values (NDJSON, or objects separated by any whitespace).
+    rows: list[dict] = []
+    idx, n = 0, len(stripped)
+    while idx < n:
+        while idx < n and stripped[idx].isspace():
+            idx += 1
+        if idx >= n:
+            break
+        obj, end = dec.raw_decode(stripped, idx)
+        if isinstance(obj, dict):
+            rows.append(obj)
+        idx = end
+    if not rows:
+        raise ValueError(
+            f"could not parse any prompt rows from {uri}: {len(raw)} bytes, head={text[:200]!r}"
+        )
+    return rows
+
+
 def load_prompts(s3: Any, prompts_uri: str, num_problems: int) -> list[dict]:
     """Load and concatenate one or more ``prompts_*.jsonl`` files (comma-separated URIs).
 
@@ -183,7 +227,8 @@ def load_prompts(s3: Any, prompts_uri: str, num_problems: int) -> list[dict]:
     for uri in [u.strip() for u in prompts_uri.split(",") if u.strip()]:
         local = f"/tmp/prompts_{len(per_file)}.jsonl"
         download_file(s3, uri, local)
-        rows = [json.loads(ln) for ln in Path(local).read_text().splitlines() if ln.strip()]
+        rows = _parse_prompt_blob(Path(local).read_bytes(), uri)
+        rows = [r for r in rows if isinstance(r.get("problem"), str) and r["problem"].strip()]
         per_file.append(rows)
     # round-robin interleave so a total cap doesn't drop an entire dataset
     merged: list[dict] = []
@@ -232,6 +277,21 @@ def _selftest() -> None:
 
     # step segmentation is exactly the scoring-time split.
     assert rm_verifier.split_steps("a\n\nb\n\nc") == ["a", "b", "c"]
+
+    # prompt-blob parsing: plain NDJSON, trailing newline, a raw newline embedded in a value
+    # (the failure that killed the first Stage-A run), and a single top-level JSON array.
+    nd = b'{"problem": "x", "answer": "1"}\n{"problem": "y", "answer": "2"}\n'
+    assert [r["problem"] for r in _parse_prompt_blob(nd, "t")] == ["x", "y"]
+    raw_nl = b'{"problem": "line1\nline2", "answer": "3"}\n{"problem": "z", "answer": "4"}\n'
+    parsed = _parse_prompt_blob(raw_nl, "t")
+    assert [r["problem"] for r in parsed] == ["line1\nline2", "z"], parsed
+    arr = b'[{"problem": "a", "answer": "1"}, {"problem": "b", "answer": "2"}]'
+    assert [r["problem"] for r in _parse_prompt_blob(arr, "t")] == ["a", "b"]
+    try:
+        _parse_prompt_blob(b'{"problem": "', "t")  # truncated head -> must raise, not silently drop
+        raise AssertionError("expected truncated blob to raise")
+    except ValueError:
+        pass
 
     print(
         "GEN_ONPOLICY SELFTEST OK: ORM balancing, trajectory selection, MC value, "
