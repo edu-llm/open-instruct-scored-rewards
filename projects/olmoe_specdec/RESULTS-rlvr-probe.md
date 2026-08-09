@@ -51,6 +51,64 @@ Remaining un-derisked at attempt 2: the memory sizing. 6 learners under ZeRO-3 p
 policy on 40 GB cards is reasoned, not measured, and OLMoE's absent GQA makes KV heavier than
 parameter counts suggest. An OOM would land after the model load, a few minutes in.
 
+## Attempt 3 — `run_019fe36d-9120-7091-a406-6ff233cf291e`
+
+`FAILED`, exit **15** (SIGTERM), `Job attempt duration exceeded timeout`. Ran the full two-hour
+cap, 22:25:44 → 00:25:56, and produced **no measurement at all**. ~$44 of A100 time for nothing.
+
+Both fixes from attempt 2 were in the image (`cd42286`, build verified before submitting). It made
+no difference to how far the run got:
+
+| attempt | died at | what happened |
+|---|---|---|
+| 2 | 3.6 min | `KeyError: ...experts.gate_up_proj` + OOM, reported and fatal |
+| 3 | **3.7 min** | engine died, error **masked**, then 116 minutes of retries |
+
+The engine failed at essentially the same point. What changed is only that the failure became
+invisible:
+
+```
+22:29:27  <engine error on /completions>
+          vllm/entrypoints/openai/server_utils.py:357, in engine_error_handler
+              server=req.app.state.server,
+          AttributeError: 'State' object has no attribute 'server'
+22:29:27  Retrying request to /completions in 0.42s
+22:31:11  ActorManager - Stopping queue polling thread...
+23:29:27  Retrying request to /completions in 0.39s      <- an hour later
+00:25:56  killed by the runtime cap
+```
+
+**So the weight-sync question is still open.** The engine died at about the moment the first sync
+happens, and the error that would say whether it was the sync is the one that got swallowed. The MoE
+unfuse may be correct and untested, or wrong in a new way. Nothing here distinguishes those.
+
+### Two integration bugs, and the second is what cost the money
+
+**1. Engine errors are unreportable.** open-instruct builds the vLLM app with `build_app(args)` then
+`init_app_state(engine_client, app.state, args)`, but vLLM 0.21's `engine_error_handler` reads
+`req.app.state.server`, which `init_app_state` does not set. So the handler raises while handling the
+error, and the original exception is lost. Every engine failure in this integration is invisible.
+
+**2. A dead engine does not fail the run.** The OpenAI client retried `/completions` for 116 minutes
+against an engine that was gone. Batch reported `RUNNING` throughout, because the process was alive
+and looping. This is the expensive bug: it converts a 4-minute diagnosis into a full-cap bill, and
+it will do so on every future failure until fixed.
+
+Neither is specific to speculative decoding, and both will hit any `grpo_fast.py` run on this fork
+whose engine dies for any reason.
+
+### What this cost, and the misread that made it worse
+
+Four probe attempts, no measurement: 30 s, 217 s, 0 s, and 2 h. The last one is the only expensive
+one, and it was avoidable — at 44 minutes I read "still `RUNNING`" as healthy progress and said so.
+**A retry loop and a working run are indistinguishable in the Batch job record**; the only thing that
+separates them is whether new step metrics are appearing in the log, which I had not checked.
+The lesson is cheap to state: for a job whose progress is measurable, check the progress, not the
+status.
+
+A tighter `maximum_runtime_hours` would have limited the damage, but it is a mitigation rather than a
+fix — the run should abort when its engine dies, not survive to be killed by a clock.
+
 ## Attempt 2 — `run_019fe337-7245-7035-bbf6-0984be48c46b`
 
 `FAILED`, exit 1, after **217 s**. Still no measurement. It got much further: Ray actors up, both
@@ -127,3 +185,22 @@ established, at a cost of a few dollars:
 - **And a working RL step is now blocked on a weight-sync incompatibility that has nothing to do
   with speculative decoding.** That is the thing to fix next, because the RLVR run needs it
   regardless of what this experiment concludes.
+
+## Next attempt: what has to change first
+
+Not another submission of the same thing. Two code fixes, both cheap, both needed before another
+approval is worth spending:
+
+1. **Make the engine's error visible.** Set `app.state.server` where open-instruct calls
+   `init_app_state`, or catch the engine exception before vLLM's handler can mask it. Until this
+   lands, a failed run tells us nothing, which is how attempt 3 cost a full cap.
+2. **Abort on a dead engine.** A `/completions` failure against a dead engine should end the run,
+   not retry. Cap the retries or check engine liveness in the actor's background-thread check
+   (`LLMRayActor.check_background_threads` already raises when the loop thread dies; the engine
+   dying needs the same treatment).
+
+With those, a failure like attempt 3's costs four minutes and prints its cause. That is the
+difference between this being answerable and not.
+
+Worth doing at the same time, since it is free: drop `maximum_runtime_hours` for probes so that a
+hang is bounded by minutes rather than hours. A mitigation, not a substitute for fix 2.

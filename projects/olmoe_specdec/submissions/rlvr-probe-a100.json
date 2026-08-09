@@ -1,6 +1,6 @@
 {
   "repository": "open-instruct-scored-rewards",
-  "commit_sha": "0dad8fda169463f3b3cad889364c6d4d498c0fe2",
+  "commit_sha": "cd4228690bde0b959d1de9b51290f11be4609ac3",
   "image_digest": "",
   "workload_profile": "open-instruct-scored-rewards-train",
   "compute_profile": "gpu-8xa100",
