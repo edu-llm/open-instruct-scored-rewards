@@ -8,5 +8,5 @@ schema_version: 1
 workload_profile: open-instruct-scored-rewards-train
 suggested_compute: gpu-1xt4
 command: >-
-  bash -lc 'python projects/prm_vs_orm/rope_probe.py
+  bash -lc 'EDULLM_CHECKPOINT_CHECK=waived python projects/prm_vs_orm/rope_probe.py
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/'
