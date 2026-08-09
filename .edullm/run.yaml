@@ -7,10 +7,12 @@ schema_version: 1
 # Single process : single L40S (bf16 in hardware), so no EDULLM_LAUNCH_CHECK waiver. Reads prior
 # runs' outputs (SFT run_019fdfac, RM run_019fe395, data run_019fdd78) via the GPU job role, writes
 # its report to this run's checkpoint dir -> -train profile. dtype bf16 is set in code; L40S has it.
+# VLLM_LOGGING_LEVEL=WARNING silences vLLM's INFO flood so the rm_common [rope-fix]/verify lines and
+# the final "BON GATE" verdict survive in the ~50-line `edullm logs` tail.
 workload_profile: open-instruct-scored-rewards-train
 suggested_compute: gpu-1xl40s
 command: >-
-  bash -lc 'python projects/prm_vs_orm/bon_eval.py
+  bash -lc 'VLLM_LOGGING_LEVEL=WARNING python projects/prm_vs_orm/bon_eval.py
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
   --orm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/orm
   --prm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/prm
