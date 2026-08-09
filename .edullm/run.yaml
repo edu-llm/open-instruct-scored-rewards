@@ -1,32 +1,29 @@
 schema_version: 1
-# PRM-vs-ORM Stage A (on-policy RM data): the re-gate recommendation. The first RMs (PRM800K /
-# GPT-4 solutions) failed the Stage-5 gate on distribution shift, so regenerate RM training data
-# ON-POLICY -- sample solutions from THIS 370M SFT policy (vLLM) on GSM8K train prompts and label
-# them with the ground-truth checker: whole-solution outcome (GSM8KVerifier) for ORM, and per-step
-# Math-Shepherd Monte-Carlo values (roll out M continuations per step prefix, value = fraction
-# reaching the correct answer, thresholded to -1/0/+1) for PRM. Writes orm.jsonl / prm.jsonl /
-# MANIFEST.json in the exact schemas run_rm.py already reads, so Stages 3-4 retrain unchanged.
-# Single process : single L40S (bf16 in hardware), so no EDULLM_LAUNCH_CHECK waiver. Reads prior
-# runs' outputs (SFT run_019fdfac, data run_019fdd78) via the GPU job role, writes its corpora to
-# this run's checkpoint dir -> -train profile. dtype bf16 is set in code; L40S has it.
-# VLLM_LOGGING_LEVEL=WARNING silences vLLM's INFO flood so the rm_common [rope-fix]/verify lines and
-# the final "GEN_ONPOLICY OK" manifest survive in the ~50-line `edullm logs` tail (printed LAST).
-#
-# vLLM + the image's broken FlashInfer JIT toolchain (cu13 nvcc emits PTX .version 9.3 but its bundled
-# ptxas is 9.0, and the <nv/target> header is absent). Two earlier runs (019fe834, 019fe848) died at
-# EngineCore init compiling FlashInfer *sampling* kernels (renorm.cu / sampling.cu / binding.cu), NOT
-# attention -- setting VLLM_ATTENTION_BACKEND=TRITON_ATTN did not change the failure. Root cause: in
-# vLLM 0.19.1 the ONLY code path that calls into flashinfer.sampling is TopKTopPSampler.forward_cuda,
-# gated by VLLM_USE_FLASHINFER_SAMPLER; the vLLM default is None (-> forward_native, pure Triton/PyTorch
-# top-k/top-p, no flashinfer), but the image env sets it truthy for the 7B Olmo3 RL recipes. Force
-# VLLM_USE_FLASHINFER_SAMPLER=0 (bool(int("0"))==False) to override the image and select forward_native
-# -- the numerically-default path, so correctness is unaffected. VLLM_ATTENTION_BACKEND=TRITON_ATTN is
-# kept as a belt so attention can never fall to the same broken FlashInfer JIT (head_dim=64 supported).
+# PRM-vs-ORM Stage B (on-policy RM retrain): retrain BOTH reward models on the on-policy corpora
+# Stage A generated from THIS 370M SFT policy (run_019fe8a1), replacing the PRM800K/GPT-4 RMs that
+# failed the Stage-5 gate on distribution shift. Both RMs share the SFT checkpoint as warm-start
+# (run_019fdfac) and the same trainer (reward_modeling_scored.py via run_rm.py); only --rm-type and
+# --data-uri differ. Trained sequentially in ONE run to spend a single L40S allocation / approval:
+#   * ORM: orm.jsonl -> 1-logit BCE on whole-solution correctness (last-token read at scoring).
+#          on-policy label balance: 304 correct / 4800 incorrect (~6% positive).
+#   * PRM: prm.jsonl -> 3-logit CE at step boundaries (neutral-counts-as-positive at scoring).
+#          on-policy rating hist neg/neu/pos = 12817/678/401 (heavily negative on a weak policy).
+# Each writes to its OWN subdir of the checkpoint dir ($EDULLM_CHECKPOINT_DIR/{orm,prm}) so Stage C
+# (bon_eval) can point --orm-uri / --prm-uri at them without collision. run_rm.py does the S3
+# plumbing (download SFT + data, accelerate launch across visible GPUs, upload the RM dir); the
+# trainer reads/writes local paths only. Single L40S has bf16 in hardware, dtype bfloat16 is named
+# in each command for the bfloat16_not_in_the_hardware guard -> no launch waiver. -train profile
+# (reads prior runs' outputs via the GPU job role, writes only its RMs). W&B auto-wired (entity
+# eduLLM, projects prm-vs-orm-orm / prm-vs-orm-prm). `&&` so PRM trains only if ORM succeeded; if
+# PRM alone fails, ORM output persists at .../checkpoints/orm/ and PRM can be re-run on its own.
 workload_profile: open-instruct-scored-rewards-train
 suggested_compute: gpu-1xl40s
 command: >-
-  bash -lc 'VLLM_LOGGING_LEVEL=WARNING VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN python projects/prm_vs_orm/gen_onpolicy.py
+  bash -lc 'python projects/prm_vs_orm/run_rm.py --rm-type orm
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
-  --prompts-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_gsm8k.jsonl
-  --out "$EDULLM_CHECKPOINT_DIR"
-  --num-problems 1200 --n-samples 16 --mc-rollouts 4 --prm-pos-trajs 2 --prm-neg-trajs 2 --prm-max-steps 8'
+  --data-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe8a1-de1f-70b9-826c-6782b857b858/checkpoints/orm.jsonl
+  --out "$EDULLM_CHECKPOINT_DIR/orm" --dtype bfloat16
+  && python projects/prm_vs_orm/run_rm.py --rm-type prm
+  --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
+  --data-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe8a1-de1f-70b9-826c-6782b857b858/checkpoints/prm.jsonl
+  --out "$EDULLM_CHECKPOINT_DIR/prm" --dtype bfloat16'
