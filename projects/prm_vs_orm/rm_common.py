@@ -169,23 +169,52 @@ def pooled_scores(model: Any, input_ids: Any, attention_mask: Any) -> Any:
 OLMO3_370M_ROPE_THETA = 500000.0
 
 
+def _find_theta(obj: Any) -> Any:
+    """Depth-first search for a scalar ``rope_theta``/``theta`` anywhere in a nested config fragment."""
+    if isinstance(obj, dict):
+        for k in ("rope_theta", "theta"):
+            v = obj.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return float(v)
+        for v in obj.values():
+            found = _find_theta(v)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _find_theta(v)
+            if found is not None:
+                return found
+    return None
+
+
 def ensure_vllm_rope_parameters(model_dir: Any, *, fallback_theta: float = OLMO3_370M_ROPE_THETA,
                                 log: Any = print) -> bool:
-    """Guarantee ``config.json``'s ``rope_parameters`` carries ``rope_theta`` for vLLM's olmo2 loader.
+    """Reduce ``config.json``'s ``rope_parameters`` to the flat form vLLM's olmo2 loader can consume.
 
-    vLLM 0.19.1 routes ``Olmo3ForCausalLM`` to its ``olmo2`` implementation, which on every
-    sliding-window layer reads ``config.rope_parameters["rope_theta"]`` (``olmo2.py:144``) and on
-    full-attention layers hands the whole ``rope_parameters`` dict to ``get_rope``. Some saved Olmo3
-    configs land with a ``rope_parameters`` dict that lacks ``rope_theta`` — transformers loads them
-    fine (it also keeps a top-level ``rope_theta``), but vLLM ``KeyError``s at engine init. This
-    repairs the on-disk config once so every downstream vLLM consumer (bon_eval / grpo_fast rollouts /
-    final eval) loads with a valid, *checkpoint-derived* RoPE base.
+    vLLM 0.19.1 routes ``Olmo3ForCausalLM`` to its ``olmo2`` implementation. On a **sliding-window**
+    layer it reads ``config.rope_parameters["rope_theta"]`` (``olmo2.py:144``) and rebuilds a fresh
+    ``{"rope_type": "default", "rope_theta": theta}``; on a **full-attention** layer it hands the
+    *entire* ``rope_parameters`` dict to ``get_rope``, which builds an ``@_ROPE_DICT`` cache key from
+    ``rope_parameters.items()`` (list values → tuples, but **dict values stay dicts**) and then does
+    ``key in _ROPE_DICT`` — so any *dict-valued* entry raises ``TypeError: unhashable type: 'dict'``,
+    and a *missing* ``rope_theta`` raises ``KeyError`` on the sliding branch. The Olmo3 configs saved
+    through the OLMo-core→HF converter + transformers round-trip can land with either shape (a nested
+    per-layer/scaling sub-dict, and/or no top-level ``rope_theta``).
 
-    Theta is sourced, in order, from the config's OWN fields — ``rope_parameters.rope_theta`` (already
-    fine → no-op) then top-level ``rope_theta`` — and only if neither exists is ``fallback_theta``
-    (the documented olmo3_370M preset value) used, so the base is never invented. For olmo3_370M the
-    sliding and full layers share one theta, so filling this single key is faithful, not an
-    approximation. Idempotent; returns True iff it rewrote the file.
+    Both failure modes are the same underlying mismatch: vLLM's olmo2 path wants a **flat** rope config.
+    So we normalise the on-disk ``rope_parameters`` to exactly what vLLM itself uses on its sliding
+    branch — ``{"rope_type": "default", "rope_theta": <theta>}`` — carrying over only *scalar* extras
+    and dropping every dict-valued entry (which ``get_rope`` cannot hash and does not want for a
+    ``default`` rope). For olmo3_370M the sliding and full layers share one theta with no RoPE scaling,
+    so this flat form is exact, not an approximation.
+
+    Theta is sourced, in order, from the config's OWN fields — a scalar ``rope_parameters.rope_theta``,
+    then top-level ``rope_theta``, then any scalar ``rope_theta``/``theta`` nested anywhere under
+    ``rope_parameters`` or ``rope_scaling`` — and only if none exists is ``fallback_theta`` (the
+    documented olmo3_370M preset) used, so the base is never invented. Logs the raw and final shapes.
+    Idempotent: a no-op (returns False) when ``rope_parameters`` is already flat with a scalar
+    ``rope_theta`` and no dict values; otherwise rewrites and returns True.
     """
     import json  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
@@ -195,19 +224,44 @@ def ensure_vllm_rope_parameters(model_dir: Any, *, fallback_theta: float = OLMO3
         log(f"[rope-fix] no config.json under {model_dir}; skipping")
         return False
     cfg = json.loads(cfg_path.read_text())
-    rp = dict(cfg["rope_parameters"]) if isinstance(cfg.get("rope_parameters"), dict) else {}
-    if rp.get("rope_theta") is not None:
-        log(f"[rope-fix] rope_parameters.rope_theta already set ({rp['rope_theta']}); no-op")
+    rp_raw = cfg.get("rope_parameters")
+    rp = dict(rp_raw) if isinstance(rp_raw, dict) else {}
+    log(f"[rope-fix] raw rope_parameters={json.dumps(rp_raw)} top-level rope_theta={cfg.get('rope_theta')!r} "
+        f"rope_scaling={json.dumps(cfg.get('rope_scaling'))}")
+
+    dict_valued = {k: v for k, v in rp.items() if isinstance(v, dict)}
+    theta_in_rp = rp.get("rope_theta")
+    already_flat = (
+        isinstance(rp_raw, dict)
+        and isinstance(theta_in_rp, (int, float)) and not isinstance(theta_in_rp, bool)
+        and not dict_valued
+    )
+    if already_flat:
+        log(f"[rope-fix] rope_parameters already flat with scalar rope_theta={theta_in_rp}; no-op")
         return False
-    if cfg.get("rope_theta") is not None:
-        theta, src = cfg["rope_theta"], "top-level rope_theta"
+
+    # Source the base: rp scalar theta -> top-level rope_theta -> any nested theta -> documented fallback.
+    if isinstance(theta_in_rp, (int, float)) and not isinstance(theta_in_rp, bool):
+        theta, src = float(theta_in_rp), "rope_parameters.rope_theta"
+    elif isinstance(cfg.get("rope_theta"), (int, float)) and not isinstance(cfg.get("rope_theta"), bool):
+        theta, src = float(cfg["rope_theta"]), "top-level rope_theta"
     else:
-        theta, src = fallback_theta, "fallback (olmo3_370M preset)"
-    rp.setdefault("rope_type", "default")
-    rp["rope_theta"] = theta
-    cfg["rope_parameters"] = rp
+        nested = _find_theta(rp) if rp else None
+        if nested is None:
+            nested = _find_theta(cfg.get("rope_scaling"))
+        if nested is not None:
+            theta, src = nested, "nested rope_theta/theta"
+        else:
+            theta, src = fallback_theta, "fallback (olmo3_370M preset)"
+
+    # Carry over only scalar extras (get_rope can hash them); drop dict-valued entries it cannot.
+    flat = {k: v for k, v in rp.items() if not isinstance(v, dict)}
+    flat["rope_type"] = "default"
+    flat["rope_theta"] = theta
+    cfg["rope_parameters"] = flat
     cfg_path.write_text(json.dumps(cfg, indent=2))
-    log(f"[rope-fix] set rope_parameters.rope_theta={theta} (source: {src}) in {cfg_path}")
+    dropped = f"; dropped dict-valued {sorted(dict_valued)}" if dict_valued else ""
+    log(f"[rope-fix] flattened rope_parameters -> {json.dumps(flat)} (theta source: {src}){dropped} in {cfg_path}")
     return True
 
 
@@ -252,21 +306,38 @@ def _selftest() -> None:
     _d = _tf.mkdtemp()
     _cfg = _Path(_d) / "config.json"
     _quiet = lambda *a, **k: None  # noqa: E731
-    # legacy top-level rope_theta but no rope_parameters -> filled from top-level, idempotent
+    # legacy top-level rope_theta but no rope_parameters -> filled from top-level, then idempotent
     _cfg.write_text(_json.dumps({"model_type": "olmo3", "rope_theta": 500000.0}))
     assert ensure_vllm_rope_parameters(_d, log=_quiet) is True
     _got = _json.loads(_cfg.read_text())["rope_parameters"]
     assert _got["rope_theta"] == 500000.0 and _got["rope_type"] == "default", _got
-    assert ensure_vllm_rope_parameters(_d, log=_quiet) is False  # second call is a no-op
+    assert ensure_vllm_rope_parameters(_d, log=_quiet) is False  # now flat -> no-op
     # rope_parameters present but missing theta -> sourced from top-level rope_theta
     _cfg.write_text(_json.dumps({"rope_parameters": {"rope_type": "default"}, "rope_theta": 12345.0}))
     assert ensure_vllm_rope_parameters(_d, log=_quiet) is True
     assert _json.loads(_cfg.read_text())["rope_parameters"]["rope_theta"] == 12345.0
+    # THE crash-2 case: rope_parameters carries a nested DICT (unhashable in get_rope) and no scalar
+    # theta at top level -> flatten, drop the dict, source theta from the nesting.
+    _cfg.write_text(_json.dumps({
+        "rope_parameters": {"rope_type": "default", "full_attention": {"rope_theta": 500000.0}},
+    }))
+    assert ensure_vllm_rope_parameters(_d, log=_quiet) is True
+    _got = _json.loads(_cfg.read_text())["rope_parameters"]
+    assert _got == {"rope_type": "default", "rope_theta": 500000.0}, _got  # nested dict dropped
+    assert not any(isinstance(v, dict) for v in _got.values())  # guaranteed hashable for get_rope
+    assert ensure_vllm_rope_parameters(_d, log=_quiet) is False  # flattened -> now a no-op
+    # scalar extras (e.g. partial_rotary_factor) survive; only dict values are dropped
+    _cfg.write_text(_json.dumps({
+        "rope_parameters": {"rope_theta": 1.0, "partial_rotary_factor": 0.5, "nested": {"x": 1}},
+    }))
+    assert ensure_vllm_rope_parameters(_d, log=_quiet) is True
+    _got = _json.loads(_cfg.read_text())["rope_parameters"]
+    assert _got["partial_rotary_factor"] == 0.5 and "nested" not in _got, _got
     # nothing declared anywhere -> documented fallback, never left unset
     _cfg.write_text(_json.dumps({"model_type": "olmo3"}))
     assert ensure_vllm_rope_parameters(_d, fallback_theta=777.0, log=_quiet) is True
     assert _json.loads(_cfg.read_text())["rope_parameters"]["rope_theta"] == 777.0
-    print("RM_COMMON SELFTEST OK: tulu encoding, label maps, truncation, rope-fix verified")
+    print("RM_COMMON SELFTEST OK: tulu encoding, label maps, truncation, rope-flatten verified")
 
 
 if __name__ == "__main__":
