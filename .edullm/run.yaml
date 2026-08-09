@@ -10,16 +10,20 @@ schema_version: 1
 # VLLM_LOGGING_LEVEL=WARNING silences vLLM's INFO flood so the rm_common [rope-fix]/verify lines and
 # the final "BON GATE" verdict survive in the ~50-line `edullm logs` tail.
 #
-# vLLM attention backend: the image's FlashInfer JIT is broken (cu13 nvcc emits PTX .version 9.3 but
-# its bundled ptxas is 9.0, and <nv/target> is missing), so vLLM's auto-selected FLASHINFER backend
-# dies compiling sampling kernels at EngineCore init. FLASH_ATTN needs vllm_flash_attn (absent), so
-# auto-selection fell to FlashInfer. Force TRITON_ATTN: a first-class v1 backend that compiles via
-# Triton's own toolchain (not the broken cu13 nvcc path) and needs neither FlashInfer nor
-# vllm_flash_attn. head_dim=64 is supported; correctness is unaffected.
+# vLLM + the image's broken FlashInfer JIT toolchain (cu13 nvcc emits PTX .version 9.3 but its bundled
+# ptxas is 9.0, and the <nv/target> header is absent). Two runs (019fe834, 019fe848) died at EngineCore
+# init compiling FlashInfer *sampling* kernels (renorm.cu / sampling.cu / flashinfer_sampling_binding.cu),
+# NOT attention -- setting VLLM_ATTENTION_BACKEND=TRITON_ATTN did not change the failure. Root cause:
+# in vLLM 0.19.1 the ONLY code path that calls into flashinfer.sampling is TopKTopPSampler.forward_cuda,
+# gated by VLLM_USE_FLASHINFER_SAMPLER; the vLLM default is None (-> forward_native, pure Triton/PyTorch
+# top-k/top-p, no flashinfer), but the image env sets it truthy for the 7B Olmo3 RL recipes. Force
+# VLLM_USE_FLASHINFER_SAMPLER=0 (bool(int("0"))==False) to override the image and select forward_native
+# -- the numerically-default path, so correctness is unaffected. VLLM_ATTENTION_BACKEND=TRITON_ATTN is
+# kept as a belt so attention can never fall to the same broken FlashInfer JIT (head_dim=64 supported).
 workload_profile: open-instruct-scored-rewards-train
 suggested_compute: gpu-1xl40s
 command: >-
-  bash -lc 'VLLM_LOGGING_LEVEL=WARNING VLLM_ATTENTION_BACKEND=TRITON_ATTN python projects/prm_vs_orm/bon_eval.py
+  bash -lc 'VLLM_LOGGING_LEVEL=WARNING VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN python projects/prm_vs_orm/bon_eval.py
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
   --orm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/orm
   --prm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/prm
