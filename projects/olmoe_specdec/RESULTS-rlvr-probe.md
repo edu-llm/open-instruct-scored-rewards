@@ -80,10 +80,16 @@ parameter count suggests — KV is ~128 KB/token, so the cache is the dominant a
 
 **Fail-fast did not fire, and that is a real gap.** The engine's workers raised, but the job stayed
 `RUNNING`: the abort added after attempt 3 keys on `AsyncLLM.errored`, and a worker-level CUDA OOM
-inside `multiproc_executor` does not necessarily mark the client errored. So the same hang-versus-
-crash ambiguity remains for this class of failure, and the 1-hour cap is still what bounds it.
-A progress-based watchdog -- no step metrics within N minutes, abort -- would close it properly and
-is the right next change to the harness.
+inside `multiproc_executor` does not necessarily mark the client errored. It then hung in exactly
+attempt 4's shape -- a 60-second `shm_broadcast` heartbeat and nothing else -- and was **cancelled
+after 21 minutes** of that rather than left to the cap.
+
+So the harness still cannot tell a hang from work, and the 1-hour cap remains the only real bound.
+Three of five attempts have now ended this way. **A progress-based watchdog is the next change and
+should precede attempt 6**: record the timestamp of the last *step metric*, and abort when it is
+older than a few minutes. Liveness signals keep missing this because the process really is alive;
+progress is the only thing that distinguishes the two, which is the same lesson the monitoring side
+learned the expensive way.
 
 Still no `f`, no R_gen: generation never started, so the measurement remains unmade.
 
