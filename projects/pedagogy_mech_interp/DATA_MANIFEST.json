@@ -1,0 +1,38 @@
+{
+  "schema": "pedagogy-mech-data/v1",
+  "datasets": [
+    {
+      "name": "MRBench V2",
+      "source": "https://github.com/kaushal0494/UnifyingAITutorEvaluation",
+      "download": "https://raw.githubusercontent.com/kaushal0494/UnifyingAITutorEvaluation/main/MRBench/MRBench_V2.json",
+      "license": "CC-BY-SA-4.0",
+      "unit": "one tutoring context with multiple annotated candidate responses",
+      "pilot_use": "natural same-context contrasts and independent response labels",
+      "contamination_note": "Public since 2024; use for ecological validation, not a fresh contamination-free test."
+    },
+    {
+      "name": "MathDial",
+      "source": "https://huggingface.co/datasets/eth-nlped/mathdial",
+      "download": "https://huggingface.co/datasets/eth-nlped/mathdial/resolve/main/train.jsonl",
+      "license": "CC-BY-SA-4.0",
+      "unit": "multi-turn synthetic-student math tutoring dialogue",
+      "pilot_use": "trajectory contexts and tutor-move-labelled elicitation examples",
+      "contamination_note": "Derived from GSM8K and publicly mirrored; never use as the sealed fresh test."
+    },
+    {
+      "name": "Bridge",
+      "source": "https://huggingface.co/datasets/rose-e-wang/bridge",
+      "download": "https://huggingface.co/datasets/rose-e-wang/bridge/resolve/main/train.json",
+      "license": "CC-BY-NC-4.0",
+      "unit": "real tutoring excerpt with original and expert-revised response",
+      "pilot_use": "natural learner errors and novice/expert response contrasts",
+      "contamination_note": "Public since 2023; some excerpts omit the original problem."
+    }
+  ],
+  "rules": {
+    "redistribution": "Keep raw data out of git. Preserve source, license, revision, and content hash.",
+    "splitting": "Group by source problem or conversation before creating variants.",
+    "analysis": "Report natural and synthetic estimates separately.",
+    "verification": "Human-check a stratified sample and every automatic-verifier disagreement."
+  }
+}

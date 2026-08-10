@@ -1,0 +1,5 @@
+data/raw/
+data/sources/
+data/pairs/
+data/download_metadata.json
+results/

@@ -1,0 +1,2175 @@
+---
+# Learning-science semantic atlas: construct ontology.
+#
+# Machine-readable companion to EVIDENCE_REVIEW.md (why each construct is here
+# and what its evidence actually supports) and LABELING_GUIDE.md (how a human
+# assigns these labels and which concepts survive their reliability gate).
+#
+# DESIGN RULE, inherited from projects/pedagogy_rm and projects/pedagogy_mech_interp:
+# a construct earns a place here only if it can be answered by POINTING AT THE
+# ARTIFACT. If a labeler must form an impression of the whole artifact, or model
+# a learner's mind, the construct belongs in `excluded_latent_constructs` no
+# matter how important it is. That rule is empirical, not stylistic: on this
+# repository's own labels, holistic "goodness" reached 39% exact agreement
+# between two careful raters (r = 0.15), while concrete `leak` reached 69%.
+#
+# NOTHING HERE IS A LEARNING CLAIM. Every entry names the level at which it is
+# scored. An artifact that enacts retrieval practice is an artifact that enacted
+# retrieval practice; it is not evidence that anyone remembered anything.
+
+schema_version: 1
+construct_version: "atlas-v1.0.0"
+status: draft_for_pilot_labeling
+n_constructs: 24
+target_label_set: "160 unique items + 40 blinded retest judgments (see LABELING_GUIDE.md)"
+
+# ---------------------------------------------------------------------------
+# The claim ladder. This is the load-bearing distinction in the whole project.
+# ---------------------------------------------------------------------------
+#
+# Four different things get called "the model is pedagogically good", and they
+# are evidence for four different claims. Conflating them is the single most
+# common error in LLM-tutoring evaluation, and it is the reason this atlas
+# exists.
+
+evidence_levels:
+  declarative_knowledge:
+    rank: 1
+    definition: >-
+      The artifact states, names, defines, recommends, or explains a principle.
+      Evidence about what the system can SAY about teaching.
+    licenses: "A claim about verbalizable knowledge of the principle."
+    does_not_license: >-
+      Any claim that the artifact itself is built according to the principle.
+      A paragraph praising retrieval practice contains no retrieval practice.
+    unit_of_analysis: "the artifact's propositional content"
+
+  enacted_output:
+    rank: 2
+    definition: >-
+      The artifact's own structure instantiates the principle, whether or not
+      the principle is ever named. Evidence about what the system DID.
+    licenses: "A claim that this artifact affords the targeted activity."
+    does_not_license: >-
+      Any claim that a learner engaged, understood, was appropriately loaded,
+      remembered, or transferred. An affordance is an offer, not an uptake.
+    unit_of_analysis: "the artifact as produced"
+
+  learner_enactment:
+    rank: 3
+    definition: >-
+      A learner actually performed the targeted cognitive work in response.
+      Requires at least one learner turn AFTER the artifact.
+    licenses: "A claim that the offer was taken up, and with what quality."
+    does_not_license: "Any claim about durable change. Uptake is not retention."
+    unit_of_analysis: "artifact plus the subsequent learner response"
+
+  learning_outcome:
+    rank: 4
+    definition: >-
+      Durable, independently assessed change measured after a delay, with the
+      artifact's answer not visible.
+    licenses: "A learning claim, bounded by the assessment's delay and distance."
+    does_not_license: >-
+      Immediate correctness, completion speed, fluency, or learner satisfaction.
+      Learners' judgments of their own learning are systematically inverted
+      relative to measured learning in active-learning settings.
+    unit_of_analysis: "learner, on an independent delayed assessment"
+
+# Every construct in this file is scored at `enacted_output` unless stated. That
+# is a deliberate scope limit, not an oversight: it is the only level a single
+# artifact can support. Constructs whose interesting content lives at level 3 or
+# 4 carry an `escalation` note in `boundary_conditions` saying what data would
+# be required to score them there.
+
+# ---------------------------------------------------------------------------
+# Evidence grading. Grades describe the INSTRUCTIONAL PRINCIPLE's evidence base,
+# not the reliability of labeling it. Those are independent and are graded
+# separately (see `labelability`); a well-evidenced principle can be unlabelable
+# and a trivially labelable feature can rest on nothing.
+# ---------------------------------------------------------------------------
+
+evidence_grades:
+  A:
+    label: "Robust"
+    criteria: >-
+      Two or more independent meta-analyses, or one meta-analysis plus a large
+      preregistered multi-site trial. Direction of effect stable across labs,
+      materials, and populations. Moderators are known and do not reverse the
+      sign in common conditions.
+  B:
+    label: "Well supported with substantial moderators"
+    criteria: >-
+      At least one meta-analysis or several independent well-controlled
+      experiments. Direction generally stable, but effect size depends heavily
+      on identified moderators, and the sign can reverse in named conditions.
+  C:
+    label: "Promising but contested or narrow"
+    criteria: >-
+      Multiple experiments concentrated in a small number of labs, or a
+      meta-analysis with serious heterogeneity, publication-bias, or
+      active-control concerns. Credible specialists disagree about the size.
+  D:
+    label: "Contested; best evidence is near zero or condition-bound"
+    criteria: >-
+      Credible meta-analyses reach opposing conclusions, or the highest-quality
+      subset of studies shows an effect indistinguishable from zero. Retained in
+      the ontology to be MEASURED and to serve as a negative control, never to
+      be assumed or rewarded.
+
+families:
+  practice_scheduling_and_generation:
+    display_name: "Practice scheduling and generation"
+    scope: "How practice opportunities are timed, sequenced, and whether the learner must produce rather than recognize."
+  example_based_and_problem_first:
+    display_name: "Example-based instruction and problem-first design"
+    scope: "How solved cases, partial solutions, comparisons, and pre-instruction problem attempts are structured."
+  generative_explanation:
+    display_name: "Generative explanation"
+    scope: "Whether the artifact requires the learner to produce explanatory content rather than receive it."
+  feedback_and_assistance:
+    display_name: "Feedback and assistance"
+    scope: "What the artifact tells the learner about their work, and how much of the remaining work it performs."
+  metacognitive_and_motivational:
+    display_name: "Metacognitive and motivational framing"
+    scope: "Prompts and framings targeting monitoring, control, attribution, value, autonomy, and belonging."
+
+output_types:
+  tutor_turn: "A single conversational turn responding to a learner."
+  dialogue_episode: "A multi-turn exchange; required for anything about escalation, fading, or contingency across time."
+  explanation_text: "Expository prose or a lesson explanation with no learner turn."
+  worked_solution: "A step-by-step solution artifact."
+  practice_item_set: "A set of problems or questions presented together."
+  study_schedule: "A plan assigning content to sessions and separations in time."
+  assessment_item: "A question intended to elicit a scorable learner response."
+  curriculum_plan: "A multi-session instructional design document."
+
+labelability_bands:
+  high:
+    expected_kappa_w: ">= 0.60"
+    meaning: "Answerable by pointing at a structural feature of the artifact. Eligible for confirmatory use if the gate is met."
+  moderate:
+    expected_kappa_w: "0.40 - 0.60"
+    meaning: "Answerable by pointing, but requires a judgment call raters can split on. Usable, with results reported against the reliability ceiling rather than against 1.0."
+  low:
+    expected_kappa_w: "< 0.40 expected"
+    meaning: "Historically unreliable in this repository or in the published annotation literature. Label only with mandatory adjudication, and treat as exploratory."
+  context_dependent:
+    expected_kappa_w: "varies with supplied context"
+    meaning: "Reliability depends entirely on whether the required context is present. Unusable when the context field is missing."
+
+reward_status:
+  eligible_with_guard: "May enter a reward, only alongside the named guard. No withholding measure may be rewarded without a paired contribution measure."
+  not_eligible_unreliable: "Blocked on labeling reliability. Revisit only if a rewritten definition clears the gate."
+  not_eligible_wrong_level: "Blocked because the construct's content lives at learner_enactment or learning_outcome and a single artifact cannot reach it."
+  not_eligible_degenerate: "Blocked because the construct has a reachable degenerate optimum that an optimizer will find."
+  measurement_only: "Collected as a covariate, negative control, or descriptor. Never a reward term."
+
+# ---------------------------------------------------------------------------
+# Constructs
+#
+# PER-CONSTRUCT FIELD CONTRACT. LABELING_GUIDE.md builds pool items verbatim out
+# of four of these fields, so their meanings are fixed here rather than left to
+# be inferred from the entries.
+#
+#   key, display_name        Stable identifier. The key is what label files carry.
+#   family                   One of `families`.
+#   definition               What must be true of the artifact, written to be
+#                            answerable by pointing at a span.
+#   evidence_grade           A-D over the INSTRUCTIONAL PRINCIPLE, per `evidence_grades`.
+#   evidence_grade_rationale What earns that grade. Names the moderators.
+#   evidence_level           Where in `evidence_levels` this is scored. Every
+#                            construct here is `enacted_output`.
+#   output_types             Artifact types the construct can apply to at all.
+#                            An artifact outside this list is
+#                            not_applicable_wrong_artifact, never a zero.
+#   required_context         Fields that must accompany the artifact. Any one
+#                            missing is not_applicable_missing_context, never a
+#                            zero. Pooling those two with real absences corrupts
+#                            both the prevalence estimate and the agreement.
+#   sibling_confusable       The one construct this is most often mistaken for,
+#                            plus the discriminator separating them. DIRECTED,
+#                            not a mutual pairing: it records what THIS construct
+#                            gets mistaken FOR, and the reverse confusion is
+#                            usually a different and rarer error. Eleven
+#                            constructs are consequently nobody's sibling; they
+#                            reach the guide's candidate-set floor through filler
+#                            allocation instead of through pairing.
+#   boundary_conditions      Named conditions that shrink, void, or reverse the
+#                            effect. An `escalation:` entry marks content living
+#                            above level 2 and states what data would reach it.
+#   positive_anchor          A clear instance. Source of the pool's
+#                            `positive_canonical` item.
+#   hard_negative            A near-miss that shares the surface form and lacks
+#                            the defining feature. Source of the `hard_negative`
+#                            item.
+#   says_only_negative       Correct declarative content ABOUT the principle,
+#                            containing none OF it. Source of the `says_only`
+#                            item, and the instrument's control on itself: a
+#                            rater or an agent who marks these present is reading
+#                            vocabulary rather than structure.
+#   surface_confounds        Features that co-occur with the construct and can be
+#                            optimized in its place. Measured, not assumed away.
+#   labelability             Band, expected weighted kappa, the basis for that
+#                            expectation, and the failure mode the guide is
+#                            written to block. Independent of evidence_grade.
+#   reward_eligibility       Status per `reward_status`, rationale, and a guard.
+#                            Blocked constructs carry a guard too, so that a
+#                            later status change cannot silently drop it.
+#   citations                Per-claim attribution: ref, doi, and the specific
+#                            claim that reference supports. Not a reading list.
+# ---------------------------------------------------------------------------
+
+constructs:
+
+  # === Family 1: practice scheduling and generation ========================
+
+  - key: retrieval_practice_opportunity
+    display_name: "Retrieval practice opportunity"
+    family: practice_scheduling_and_generation
+    definition: >-
+      The artifact requires the learner to produce target content from memory
+      while that content is not visible or recoverable from the artifact itself.
+      The defining feature is the withheld answer plus a required production,
+      not the presence of a question mark.
+    evidence_grade: A
+    evidence_grade_rationale: >-
+      Three independent meta-analyses across laboratory and classroom settings,
+      with consistent direction and a known moderator structure (final-test
+      delay, feedback presence, initial retrieval success).
+    evidence_level: enacted_output
+    output_types: [tutor_turn, assessment_item, practice_item_set, dialogue_episode]
+    required_context:
+      - "the target knowledge component the learner is meant to produce"
+      - "the full artifact text, to verify the answer is not stated or trivially inferable elsewhere in it"
+    sibling_confusable:
+      key: self_explanation_prompt
+      discriminator: >-
+        Retrieval asks for content the learner already studied and must now
+        recover. Self-explanation asks the learner to generate connective
+        reasoning about material that is currently in front of them. If the
+        source material is visible and the request is "why does this work",
+        it is self-explanation, not retrieval.
+    boundary_conditions:
+      - "Benefits over restudy grow with the retention interval and can be absent or reversed on immediate tests."
+      - "Corrective feedback substantially raises the benefit, and matters most when initial retrieval fails."
+      - "Very low initial retrieval success without feedback weakens or eliminates the advantage."
+      - "escalation: whether the learner actually retrieved is learner_enactment and needs the next turn."
+    positive_anchor: >-
+      "Without looking back at the worked example, write out the three steps for
+      balancing this equation." The target is named, the source is closed, and a
+      production is required.
+    hard_negative: >-
+      "Does that make sense? Remember, we balance the oxygens first." A question
+      is present, the answer is supplied inside the same turn, and the only
+      required production is a yes. Recognition prompts and rhetorical checks
+      belong here.
+    says_only_negative: >-
+      "Research on the testing effect shows that quizzing yourself is more
+      effective than rereading, so try to self-quiz." Correct declarative
+      content about retrieval practice, containing no retrieval opportunity.
+    surface_confounds:
+      - "presence of a question mark"
+      - "imperative mood"
+      - "short artifact length"
+      - "second-person address"
+    labelability:
+      band: high
+      expected_kappa_w: "0.60 - 0.75"
+      basis: >-
+        Structurally checkable: is the target stated in the artifact, and is a
+        production required. The closest measured analogue in this repository,
+        `leak`, reached 69% exact agreement where holistic quality reached 39%.
+      failure_mode: >-
+        Raters differ on whether an answer is "trivially inferable". The guide
+        resolves this with a fixed test: an answer counts as supplied if a
+        learner could produce it by copying a span of the artifact.
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Enacted, structurally verifiable, and high evidence grade."
+      guard: >-
+        This is a WITHHOLDING measure and its unguarded optimum is a bare
+        question that teaches nothing. It may only be rewarded jointly with a
+        contribution measure (elaborated_feedback_specificity or
+        subgoal_labeled_structure). This repository has already produced that
+        collapse once: nine turns maxing four withholding dimensions at once had
+        a median length of 12 words against a corpus median of 30.
+    citations:
+      - ref: "Rowland (2014), Psychological Bulletin"
+        doi: "10.1037/a0037559"
+        claim: "Meta-analysis of the testing effect versus restudy; overall benefit with delay and feedback as key moderators."
+      - ref: "Adesope, Trevisan & Sundararajan (2017), Review of Educational Research"
+        doi: "10.3102/0034654316689306"
+        claim: "Practice testing outperforms restudy and filler controls across formats."
+      - ref: "Yang, Luo, Vadillo, Yu & Shanks (2021), Psychological Bulletin"
+        doi: "10.1037/bul0000309"
+        claim: "Classroom quizzing benefits replicate outside the laboratory; feedback and repeated testing moderate."
+      - ref: "Roediger & Karpicke (2006), Psychological Science"
+        doi: "10.1111/j.1467-9280.2006.01693.x"
+        claim: "Primary demonstration that the restudy advantage reverses as retention interval lengthens."
+      - ref: "Karpicke & Roediger (2008), Science"
+        doi: "10.1126/science.1152408"
+        claim: "Retrieval, not repeated study, produces the durable gain."
+
+  - key: spaced_practice_schedule
+    display_name: "Spaced practice schedule"
+    family: practice_scheduling_and_generation
+    definition: >-
+      The artifact assigns encounters with the same target to occasions
+      separated in time, with a separation that is nonzero relative to the
+      intended retention interval. Distribution across sessions is the feature;
+      repetition within one sitting is not.
+    evidence_grade: A
+    evidence_grade_rationale: >-
+      One of the largest and oldest replicated effects in the field, with a
+      quantitative synthesis of lag and retention-interval interactions and a
+      recent meta-analysis specific to spaced retrieval.
+    evidence_level: enacted_output
+    output_types: [study_schedule, curriculum_plan, practice_item_set]
+    required_context:
+      - "the intended retention interval or assessment date"
+      - "explicit session boundaries or timestamps; wall-clock separation, not turn count"
+    sibling_confusable:
+      key: successive_relearning_criterion
+      discriminator: >-
+        Spacing specifies only that encounters are separated. Successive
+        relearning additionally requires retrieval to a stated correctness
+        criterion within each session. A schedule with separated rereading is
+        spacing; it is not successive relearning.
+    boundary_conditions:
+      - "Optimal lag scales with the retention interval; a lag optimal for a one-week test is wrong for a six-month test."
+      - "Spacing typically depresses immediate performance while improving delayed retention, so any immediate-performance metric will score it as worse."
+      - "Turns inside one conversation are not spacing, regardless of intervening content."
+      - "escalation: whether the schedule was followed is learner_enactment and requires logs."
+    positive_anchor: >-
+      A plan that revisits the same twelve terms on days 1, 3, 8, and 20 ahead
+      of a day-30 assessment, naming the target set and the dates.
+    hard_negative: >-
+      A plan that reviews all twelve terms three times inside one study session,
+      or one that lists "review regularly" with no assigned occasions. Massed
+      repetition and unscheduled intention are the two common counterfeits.
+    says_only_negative: >-
+      "Spacing your practice out over several days is better than cramming."
+      A true statement about spacing inside an artifact that schedules nothing.
+    surface_confounds:
+      - "the literal words 'spaced', 'review', or 'revisit'"
+      - "the presence of any list of dates, whether or not targets repeat across them"
+      - "total artifact length, which grows with any schedule"
+    labelability:
+      band: context_dependent
+      expected_kappa_w: "0.65 - 0.80 with session boundaries; unusable without them"
+      basis: "Mechanically checkable once occasions are timestamped: does a target recur across distinct occasions."
+      failure_mode: >-
+        Raters silently treat conversational turns as occasions. The guide makes
+        applicability an explicit judgment so that a single-turn artifact is
+        marked not_applicable rather than scored zero, which would otherwise
+        pollute the prevalence estimate.
+    reward_eligibility:
+      status: not_eligible_wrong_level
+      rationale: >-
+        A single tutor turn cannot instantiate a schedule. Rewarding this on
+        turn-level data would reward the WORD "spaced", which is exactly the
+        says-only failure the atlas is built to detect.
+      guard: "Eligible only on study_schedule or curriculum_plan artifacts with real session boundaries."
+    citations:
+      - ref: "Cepeda, Pashler, Vul, Wixted & Rohrer (2006), Psychological Bulletin"
+        doi: "10.1037/0033-2909.132.3.354"
+        claim: "Quantitative synthesis of distributed practice; lag interacts with retention interval."
+      - ref: "Latimier, Peyre & Ramus (2021), Educational Psychology Review"
+        doi: "10.1007/s10648-020-09572-8"
+        claim: "Meta-analysis of spacing retrieval-practice episodes; benefit of spaced over massed retrieval."
+      - ref: "Carpenter, Pan & Butler (2022), Nature Reviews Psychology"
+        doi: "10.1038/s44159-022-00089-1"
+        claim: "Review of spacing and retrieval practice, including implementation constraints in real instruction."
+      - ref: "Dunlosky, Rawson, Marsh, Nathan & Willingham (2013), Psychological Science in the Public Interest"
+        doi: "10.1177/1529100612453266"
+        claim: "Distributed practice and practice testing rated high utility; most popular techniques rated low."
+
+  - key: successive_relearning_criterion
+    display_name: "Successive relearning to criterion"
+    family: practice_scheduling_and_generation
+    definition: >-
+      The artifact requires the learner to retrieve each target to a stated
+      correctness criterion, and to repeat that criterion-based retrieval in
+      later separated sessions. It is the conjunction of retrieval, a criterion,
+      and spacing, and it is scored only when all three are specified.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Strong and replicated durable-learning effects including in authentic
+      courses, but the evidence base is concentrated in a smaller number of labs
+      than spacing or retrieval alone.
+    evidence_level: enacted_output
+    output_types: [study_schedule, curriculum_plan, practice_item_set]
+    required_context:
+      - "a stated correctness criterion, for example 'until each term is recalled correctly once' or 'three correct recalls'"
+      - "session boundaries showing repetition across occasions"
+    sibling_confusable:
+      key: spaced_practice_schedule
+      discriminator: >-
+        If no criterion is stated, it is spacing. If a criterion is stated but
+        all repetitions sit in one session, it is criterion learning without
+        spacing. Only both together score here.
+    boundary_conditions:
+      - "The criterion, not merely the repetition, is doing the work; dropping it reverts the design to ordinary spacing."
+      - "Cost is real: criterion-based schedules take more learner time per target, and the comparison should be time-matched."
+      - "escalation: whether criterion was actually reached is learner_enactment and requires per-target logs."
+    positive_anchor: >-
+      "Each session, quiz yourself on all twenty definitions and keep retesting
+      the ones you miss until you have recalled each correctly once. Repeat on
+      days 3, 7, and 14."
+    hard_negative: >-
+      "Review the twenty definitions on days 3, 7, and 14 until you feel
+      confident." Spacing plus a subjective stopping rule. Learner-judged
+      confidence is not a correctness criterion, and is the specific signal
+      known to be poorly calibrated.
+    says_only_negative: >-
+      "Successive relearning is the most efficient way to make knowledge stick."
+      A description of the technique that schedules nothing and sets no criterion.
+    surface_confounds:
+      - "the word 'mastery'"
+      - "any numeric repetition count, whether or not it is contingent on correctness"
+      - "flashcard vocabulary"
+    labelability:
+      band: high
+      expected_kappa_w: "0.65 - 0.80"
+      basis: "Three checkable conjuncts, each present or absent in the text."
+      failure_mode: "Raters accept confidence-based stopping rules as criteria. The guide names this as the canonical hard negative."
+    reward_eligibility:
+      status: not_eligible_wrong_level
+      rationale: "Multi-session by definition; unreachable from a single turn."
+      guard: "Eligible only on schedule-shaped artifacts, and only jointly with a time-cost covariate."
+    citations:
+      - ref: "Rawson & Dunlosky (2011), Journal of Experimental Psychology: General"
+        doi: "10.1037/a0023956"
+        claim: "Criterion level and number of relearning sessions jointly determine durable retention; the schedule is the manipulation."
+      - ref: "Dunlosky, Rawson, Marsh, Nathan & Willingham (2013), Psychological Science in the Public Interest"
+        doi: "10.1177/1529100612453266"
+        claim: "Combining distributed practice with practice testing is the highest-utility pairing reviewed."
+      - ref: "Carpenter, Pan & Butler (2022), Nature Reviews Psychology"
+        doi: "10.1038/s44159-022-00089-1"
+        claim: "Reviews successive relearning as the combined application of the two strongest schedule effects."
+
+  - key: interleaved_discrimination_practice
+    display_name: "Interleaved discrimination practice"
+    family: practice_scheduling_and_generation
+    definition: >-
+      Practice items from confusable categories are mixed so that the learner
+      must identify which category or procedure applies before applying it. The
+      required act is discrimination; mere topical variety is not the construct.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      A multilevel meta-analysis finds a moderate overall benefit that is
+      strongly material-dependent, and the sign REVERSES for some materials.
+      That reversal is why this is B and not A.
+    evidence_level: enacted_output
+    output_types: [practice_item_set, curriculum_plan, assessment_item]
+    required_context:
+      - "the category or procedure each item belongs to"
+      - "evidence that the categories are confusable with one another, not merely different"
+      - "the item order as presented"
+    sibling_confusable:
+      key: spaced_practice_schedule
+      discriminator: >-
+        Interleaving is about ORDER within a practice set: which category comes
+        next. Spacing is about SEPARATION IN TIME for one target. An interleaved
+        set delivered in a single sitting is interleaving with no spacing.
+    boundary_conditions:
+      - "Benefit is largest when between-category similarity is high and within-category variability is high; it shrinks as categories become easy to tell apart."
+      - "Effects differ sharply by material: strongest for visual category learning, smaller for mathematics, and BLOCKING outperformed interleaving for word learning."
+      - "Interleaving typically depresses practice-phase accuracy while improving delayed discrimination, so practice accuracy is the wrong success metric."
+      - "Mixing unrelated topics is variety, not interleaving, and carries none of the supporting evidence."
+    positive_anchor: >-
+      A twelve-problem set alternating among related-rates, optimization, and
+      linear-approximation problems that are superficially similar, where each
+      item requires choosing the method before executing it.
+    hard_negative: >-
+      A twelve-problem set alternating between French vocabulary and calculus.
+      The order is mixed and no discrimination is required, because no learner
+      could confuse the two. Unrelated variety is the canonical counterfeit.
+    says_only_negative: >-
+      "Mixing up problem types is better than doing them in blocks, because it
+      forces you to choose a strategy." A correct account of interleaving
+      attached to a blocked problem set.
+    surface_confounds:
+      - "number of distinct topics in the set"
+      - "alternation of any kind, including alternation between difficulty levels"
+      - "the words 'mixed', 'varied', or 'interleaved' in a heading"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.45 - 0.60"
+      basis: >-
+        Ordering is mechanically checkable, but "confusable" requires a domain
+        judgment two raters can legitimately split on.
+      failure_mode: >-
+        Raters over-apply the label to any varied set. The guide requires the
+        rater to name the specific confusion the set trains; if they cannot name
+        it, presence is 0.
+    reward_eligibility:
+      status: not_eligible_wrong_level
+      rationale: "Requires a set, not a turn, and requires category metadata a generator can fabricate."
+      guard: "Eligible on practice_item_set artifacts only when category labels come from the dataset rather than from the artifact's own claims."
+    citations:
+      - ref: "Brunmair & Richter (2019), Psychological Bulletin"
+        doi: "10.1037/bul0000209"
+        claim: "59 studies, 238 effect sizes; overall g = 0.42, paintings g = 0.67, mathematics g = 0.34, and words g = -0.39 favoring blocking. Stronger effects for higher between-category and lower within-category similarity."
+      - ref: "Rohrer, Dedrick & Stershic (2015), Journal of Educational Psychology"
+        doi: "10.1037/edu0000001"
+        claim: "Interleaved mathematics practice improves delayed test performance over blocked practice."
+      - ref: "Taylor & Rohrer (2010), Applied Cognitive Psychology"
+        doi: "10.1002/acp.1598"
+        claim: "Interleaving depresses practice accuracy while improving delayed performance."
+
+  - key: pretest_prequestion
+    display_name: "Pretest or prequestion before instruction"
+    family: practice_scheduling_and_generation
+    definition: >-
+      The artifact requires an attempt at target content BEFORE the content is
+      presented, with the attempt expected to fail, followed by the instruction
+      that resolves it. Position relative to instruction is definitional.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Replicated across labs and materials with a clear mechanism account, but
+      with a documented cost to non-pretested content that constrains its use.
+    evidence_level: enacted_output
+    output_types: [explanation_text, tutor_turn, curriculum_plan, assessment_item]
+    required_context:
+      - "the ordering of the question relative to the instruction that answers it"
+      - "confirmation that the answer follows in the same artifact or a specified next step"
+    sibling_confusable:
+      key: retrieval_practice_opportunity
+      discriminator: >-
+        Position decides it. A question about material already studied is
+        retrieval practice. The same question about material not yet presented
+        is a pretest. The text can be word-for-word identical.
+    boundary_conditions:
+      - "The benefit requires the answer to arrive afterward; an unresolved failed attempt is not the effect."
+      - "Prequestions can enhance memory for pretested content while IMPAIRING memory for non-pretested content in the same lesson, so coverage matters."
+      - "Errorful generation benefits require the target to be related to the erroneous guess; unrelated guessing does not carry the effect."
+    positive_anchor: >-
+      "Before we look at the mechanism, take a guess: what happens to reaction
+      rate if you double the concentration of only one reactant?" followed by the
+      explanation that resolves it.
+    hard_negative: >-
+      A rhetorical opener, "Ever wonder why reactions speed up?", followed
+      immediately by the explanation, with no attempt required and no answer
+      withheld even momentarily. Curiosity framing is not a prequestion.
+    says_only_negative: >-
+      "Guessing before you read helps you learn, even when the guess is wrong."
+      The mechanism described, no attempt requested.
+    surface_confounds:
+      - "any question in the first sentence"
+      - "the words 'predict', 'guess', or 'before we begin'"
+      - "question count in the opening paragraph"
+    labelability:
+      band: high
+      expected_kappa_w: "0.60 - 0.75"
+      basis: "Order and answer-presence are both checkable spans in the text."
+      failure_mode: >-
+        Raters count rhetorical openers. The guide's test is whether a learner
+        response is required before reading further.
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Structurally verifiable at artifact level with a stable direction of effect."
+      guard: >-
+        Must be paired with a check that the resolving instruction actually
+        follows. Rewarding the question alone selects for unresolved quizzing,
+        which the evidence does not support.
+    citations:
+      - ref: "Richland, Kornell & Kao (2009), Journal of Experimental Psychology: Applied"
+        doi: "10.1037/a0016496"
+        claim: "Unsuccessful retrieval attempts before study enhance later learning of the pretested material."
+      - ref: "Kornell, Hays & Bjork (2009), Journal of Experimental Psychology: Learning, Memory, and Cognition"
+        doi: "10.1037/a0015729"
+        claim: "Errorful generation followed by correction outperforms study-only, for related targets."
+      - ref: "Carpenter & Toftness (2017), Journal of Applied Research in Memory and Cognition"
+        doi: "10.1016/j.jarmac.2016.07.014"
+        claim: "Prequestions improve learning of prequestioned content from video lessons."
+      - ref: "Pan & Sana (2021), Journal of Experimental Psychology: Applied"
+        doi: "10.1037/xap0000345"
+        claim: "Pretesting benefits pretested content but can impair related non-pretested content relative to posttesting."
+
+  # === Family 2: example-based instruction and problem-first design =========
+
+  - key: worked_example_provision
+    display_name: "Worked example provision"
+    family: example_based_and_problem_first
+    definition: >-
+      The artifact supplies a complete solution to a problem of the target type,
+      with the intermediate steps shown, for the learner to study rather than to
+      produce.
+    evidence_grade: A
+    evidence_grade_rationale: >-
+      A 2023 meta-analysis of 55 studies (g = 0.48) on top of four decades of
+      controlled experiments and a well-specified cognitive-load account.
+    evidence_level: enacted_output
+    output_types: [worked_solution, explanation_text, tutor_turn, curriculum_plan]
+    required_context:
+      - "the problem the solution addresses"
+      - "the learner's prior knowledge level, for interpretation rather than for detection"
+    sibling_confusable:
+      key: completion_problem_scaffold
+      discriminator: >-
+        A worked example leaves nothing for the learner to complete. If any
+        step is deliberately blank and marked for the learner, it is a
+        completion problem. The distinction is the presence of a hole.
+      note: >-
+        Also confusable with answer_withholding_level, which scores the same
+        artifact on the opposite axis. A worked example is deliberately maximal
+        leakage, and that is not a defect. Scoring these two independently is
+        the point.
+    boundary_conditions:
+      - "The advantage over problem solving shrinks and can reverse as learner expertise grows; see expertise_reversal_adaptation."
+      - "Correct examples outperform erroneous examples and correct-plus-erroneous mixtures for overall learning."
+      - "Adding self-explanation prompts to worked examples was a NEGATIVE moderator in the mathematics meta-analysis, which contradicts the common assumption that the two stack."
+      - "The example must be complete and correct; an abbreviated solution that skips the difficult step is not this construct."
+    positive_anchor: >-
+      A fully worked derivation showing every intermediate line, presented for
+      study, with no step left for the learner and no request to solve.
+    hard_negative: >-
+      A solution that states the answer and gestures at the method: "Use the
+      chain rule and you get 6x + 2." Answer-plus-assertion is answer leakage
+      without the step structure that carries the worked-example effect.
+    says_only_negative: >-
+      "Studying worked examples is more efficient for novices than solving
+      problems unaided." The principle asserted; no example provided.
+    surface_confounds:
+      - "artifact length, which is the single strongest confound here"
+      - "numbered lists and step headings, which can dress up an answer assertion"
+      - "presence of equations or code blocks"
+    labelability:
+      band: high
+      expected_kappa_w: "0.65 - 0.80"
+      basis: "Completeness of the step chain is checkable against a reference solution."
+      failure_mode: >-
+        Raters accept a plausible-looking list of steps that omits the load-
+        bearing one. The guide requires checking against the supplied reference
+        solution rather than re-deriving it, which is how this repository's
+        `correct` dimension was repaired after failing its gate at kappa 0.18.
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Well evidenced and structurally checkable."
+      guard: >-
+        Strongly length-correlated. Must be rewarded only with an explicit
+        length covariate, and never jointly with a withholding measure that it
+        mechanically opposes without the scenario declaring which is prescribed.
+    citations:
+      - ref: "Barbieri, Miller-Cotto, Clerjuste & Chawla (2023), Educational Psychology Review"
+        doi: "10.1007/s10648-023-09745-1"
+        claim: "55 studies, 181 effect sizes, g = 0.48 on mathematics performance. Correct examples outperform erroneous; pairing with self-explanation prompts was a negative moderator."
+      - ref: "Sweller & Cooper (1985), Cognition and Instruction"
+        doi: "10.1207/s1532690xci0201_3"
+        claim: "Original demonstration that studying worked examples beats equivalent problem solving for algebra novices."
+      - ref: "Atkinson, Derry, Renkl & Wortham (2000), Review of Educational Research"
+        doi: "10.3102/00346543070002181"
+        claim: "Review of design principles governing when examples help."
+      - ref: "Renkl (2014), Cognitive Science"
+        doi: "10.1111/cogs.12086"
+        claim: "Instructionally oriented theory of example-based learning and its transition to problem solving."
+
+  - key: completion_problem_scaffold
+    display_name: "Completion problem"
+    family: example_based_and_problem_first
+    definition: >-
+      A partially worked solution with one or more specified steps left blank
+      for the learner to supply. The solved portion carries the structure; the
+      blank carries the learner's work.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Consistent experimental support within the cognitive-load tradition and a
+      clear mechanism, but a smaller and less independently replicated base than
+      worked examples themselves.
+    evidence_level: enacted_output
+    output_types: [worked_solution, practice_item_set, tutor_turn]
+    required_context:
+      - "the reference solution, to establish which step is missing"
+      - "explicit marking of what the learner is to supply"
+    sibling_confusable:
+      key: worked_example_provision
+      discriminator: "Presence of a designated blank. No blank, no completion problem."
+      note: >-
+        Also confusable with guidance_fading_sequence: a single completion
+        problem is a snapshot, whereas fading is a TRAJECTORY of completion
+        problems with a shrinking solved portion. One item cannot be fading.
+    boundary_conditions:
+      - "Which step is left blank matters; blanking a trivial arithmetic step provides scaffolding in name only."
+      - "The solved portion must remain visible while the learner works, or the item becomes an ordinary problem."
+      - "escalation: whether the learner filled the blank correctly is learner_enactment."
+    positive_anchor: >-
+      A five-line derivation with lines 1, 2, 4, and 5 given and line 3 replaced
+      by a marked blank for the learner to derive, with the surrounding lines
+      still visible.
+    hard_negative: >-
+      A problem statement followed by "now you try", with no solved steps shown.
+      An unassisted problem framed encouragingly is not a completion problem.
+    says_only_negative: >-
+      "Completion problems bridge the gap between studying examples and solving
+      problems on your own." The rationale with nothing partially worked.
+    surface_confounds:
+      - "blank lines, underscores, or ellipses used as formatting rather than as designated work"
+      - "the phrase 'fill in'"
+      - "the ratio of shown to hidden text, which does not track which step is hidden"
+    labelability:
+      band: high
+      expected_kappa_w: "0.60 - 0.75"
+      basis: "A designated blank inside an otherwise solved chain is a visible feature."
+      failure_mode: "Raters differ on whether the blanked step is substantive. The guide asks them to name the step and check it against the reference solution."
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Enacted and checkable, and it is one of the few constructs that is simultaneously a contribution and a withholding measure, which makes it comparatively hard to game."
+      guard: "Requires the reference solution at scoring time; without it, blank-counting is trivially exploitable."
+    citations:
+      - ref: "van Merrienboer & Krammer (1987), Instructional Science"
+        doi: "10.1007/BF00120253"
+        claim: "Completion strategy introduced and contrasted with conventional problem assignments in programming instruction."
+      - ref: "Paas (1992), Journal of Educational Psychology"
+        doi: "10.1037/0022-0663.84.4.429"
+        claim: "Completion problems improved transfer over conventional problems at lower reported mental effort."
+      - ref: "van Merrienboer, Kirschner & Kester (2003), Educational Psychologist"
+        doi: "10.1207/S15326985EP3801_2"
+        claim: "Completion problems positioned within a load-management account of complex-skill training."
+
+  - key: guidance_fading_sequence
+    display_name: "Guidance fading across a sequence"
+    family: example_based_and_problem_first
+    definition: >-
+      Across an ordered sequence, the proportion of the solution supplied
+      decreases and the proportion the learner produces increases, in a
+      direction that is monotone or contingent on demonstrated success.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Direct experimental support for backward fading over fixed example-problem
+      pairs, integrated with the expertise-reversal literature, but from a
+      concentrated set of research groups.
+    evidence_level: enacted_output
+    output_types: [curriculum_plan, practice_item_set, dialogue_episode]
+    required_context:
+      - "at least three ordered items or turns from the same sequence"
+      - "the amount of solution supplied at each position, measured against the reference solution"
+      - "for contingent fading, the learner's success at each position"
+    sibling_confusable:
+      key: completion_problem_scaffold
+      discriminator: "Fading is a property of a sequence; a completion problem is a property of one item. A single item can never be labeled fading."
+    boundary_conditions:
+      - "Backward fading (removing the last steps first) has the most direct support; the direction of removal is part of the manipulation."
+      - "Fading that is scheduled rather than contingent ignores the learner and is a weaker version of the same idea."
+      - "Fading faster than competence grows is indistinguishable from abandonment, and nothing in this literature supports it."
+      - "escalation: whether fading was appropriate for THIS learner requires their success record, which pushes it to learner_enactment."
+    positive_anchor: >-
+      A three-item sequence where item 1 is fully worked, item 2 omits the final
+      step, and item 3 omits the final two, each against the same solution
+      structure.
+    hard_negative: >-
+      A sequence that simply gets shorter, or one where the tutor gives less help
+      because the learner has stopped responding. Decreasing verbosity is not
+      decreasing scaffolding, and disengagement-driven withdrawal is not fading.
+    says_only_negative: >-
+      "As students gain skill, you should gradually remove the support you give
+      them." The fading principle stated inside a sequence that never fades.
+    surface_confounds:
+      - "monotonically decreasing turn length across the sequence"
+      - "decreasing count of numbered steps"
+      - "position in the conversation, since later turns are shorter on average"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.40 - 0.60"
+      basis: "Requires holding three items in mind and comparing each against a reference; more demanding than any single-item judgment here."
+      failure_mode: >-
+        Raters use length as the proxy for support, which is precisely the
+        confound. The guide requires counting supplied reference steps rather
+        than words.
+    reward_eligibility:
+      status: not_eligible_wrong_level
+      rationale: "Trajectory-level. Turn-level rewards cannot see it, and a proxy based on decreasing length would reward terseness."
+      guard: "Revisit only with sequence-level scoring and reference-step counting."
+    citations:
+      - ref: "Renkl, Atkinson, Maier & Staley (2002), Journal of Experimental Education"
+        doi: "10.1080/00220970209599510"
+        claim: "Fading worked steps produced better transfer than fixed example-problem pairs."
+      - ref: "Atkinson, Renkl & Merrill (2003), Journal of Educational Psychology"
+        doi: "10.1037/0022-0663.95.4.774"
+        claim: "Backward fading plus self-explanation prompts improved near and far transfer."
+      - ref: "Kalyuga (2007), Educational Psychology Review"
+        doi: "10.1007/s10648-007-9054-3"
+        claim: "Adaptive fading is the recommended response to growing expertise."
+
+  - key: subgoal_labeled_structure
+    display_name: "Subgoal-labeled solution structure"
+    family: example_based_and_problem_first
+    definition: >-
+      The solution is segmented into named functional chunks that state what
+      each group of steps ACCOMPLISHES, rather than only what it does
+      procedurally. The label names a purpose, not an operation.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Direct, repeatedly replicated experimental effects on novel-problem
+      transfer with a specific mechanism, but concentrated in a small research
+      lineage and mostly in STEM procedural domains.
+    evidence_level: enacted_output
+    output_types: [worked_solution, explanation_text, tutor_turn]
+    required_context:
+      - "the reference solution, to check that labels correspond to real functional boundaries"
+    sibling_confusable:
+      key: worked_example_provision
+      discriminator: >-
+        Subgoal labeling is a property OF a worked example, not an alternative
+        to it. An unlabeled complete solution scores positive on worked example
+        and zero here. Both can be present.
+    boundary_conditions:
+      - "Labels must be functional ('isolate the variable') rather than positional ('step 3') or procedural ('subtract 4 from both sides')."
+      - "Effects are on transfer to novel problems more than on reproducing the practiced problem."
+      - "Learner-generated subgoal labels and instructor-provided labels are different manipulations with different costs."
+    positive_anchor: >-
+      A solution divided under the headings "Set up the conservation equation",
+      "Eliminate the unknown force", and "Solve for acceleration", where each
+      heading names what that block achieves.
+    hard_negative: >-
+      The same solution divided under "Step 1", "Step 2", "Step 3", or under
+      restatements of the operation performed. Numbering is segmentation without
+      the functional content that carries the effect.
+    says_only_negative: >-
+      "Grouping steps under labels that say what they accomplish helps students
+      solve new problems." Stated, then an unlabeled solution follows.
+    surface_confounds:
+      - "presence of any headings or bold text"
+      - "markdown structure density"
+      - "number of segments, independent of what the segment names say"
+    labelability:
+      band: high
+      expected_kappa_w: "0.60 - 0.75"
+      basis: "Functional versus positional labeling is a concrete property of the label text."
+      failure_mode: "Raters count headings. The guide requires quoting the label and judging whether it states a purpose."
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: >-
+        One of the few pure CONTRIBUTION measures in the atlas, which makes it a
+        valid pairing partner for withholding measures.
+      guard: "Guard against heading-spam by requiring labels to map onto reference-solution boundaries."
+    citations:
+      - ref: "Catrambone (1998), Journal of Experimental Psychology: General"
+        doi: "10.1037/0096-3445.127.4.355"
+        claim: "Subgoal-oriented example structure improves solving of novel problems requiring adaptation."
+      - ref: "Margulieux & Catrambone (2016), Learning and Instruction"
+        doi: "10.1016/j.learninstruc.2015.12.002"
+        claim: "Subgoal labels in expository text and worked examples improve problem-solving performance."
+
+  - key: analogical_case_comparison
+    display_name: "Analogical case comparison"
+    family: example_based_and_problem_first
+    definition: >-
+      Two or more cases are presented together with an explicit invitation to
+      align them and identify shared structure. Simultaneous availability plus a
+      comparison demand are both required.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      A meta-analysis of case comparisons plus well-controlled primary
+      experiments on analogical encoding, with the caveat that benefits depend
+      on the comparison actually being performed and on case selection.
+    evidence_level: enacted_output
+    output_types: [explanation_text, tutor_turn, worked_solution, practice_item_set]
+    required_context:
+      - "both cases, present in the same artifact"
+      - "the structural relation the comparison is meant to reveal"
+    sibling_confusable:
+      key: self_explanation_prompt
+      discriminator: >-
+        Self-explanation asks the learner to explain ONE case to themselves.
+        Analogical comparison requires two cases and an alignment demand. A
+        prompt to explain a single example is not comparison.
+    boundary_conditions:
+      - "A single analogy used illustratively ('electricity is like water in pipes') is not case comparison; there is no second case to align and no alignment demand."
+      - "Benefits depend on the cases sharing deep structure while differing on surface features; two near-identical cases teach nothing about structure."
+      - "Presenting cases sequentially rather than simultaneously weakens alignment."
+      - "escalation: whether the learner extracted the shared principle is learner_enactment."
+    positive_anchor: >-
+      Two negotiation scenarios given side by side with "What is the same about
+      how value was created in these two deals, despite the different
+      industries?"
+    hard_negative: >-
+      Two examples presented in sequence to illustrate a rule already stated,
+      with no request to compare them. Multiple examples are not a comparison.
+    says_only_negative: >-
+      "Comparing two examples helps students see the underlying principle rather
+      than the surface story." Asserted, with one example supplied.
+    surface_confounds:
+      - "the words 'like', 'similar to', 'compare'"
+      - "the presence of two of anything"
+      - "artifact length, which doubles when a second case is added"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.45 - 0.60"
+      basis: "Two cases plus a demand are checkable; whether they share deep structure is a domain judgment."
+      failure_mode: "Raters accept illustrative similes. The guide requires identifying two distinct cases before presence can be marked."
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Enacted and checkable at artifact level."
+      guard: "Heavily length-confounded. Requires a length covariate and a check that the second case is a case, not a restatement."
+    citations:
+      - ref: "Gentner, Loewenstein & Thompson (2003), Journal of Educational Psychology"
+        doi: "10.1037/0022-0663.95.2.393"
+        claim: "Analogical encoding via case comparison improves transfer over studying cases separately."
+      - ref: "Alfieri, Nokes-Malach & Schunn (2013), Educational Psychologist"
+        doi: "10.1080/00461520.2013.775712"
+        claim: "Meta-analytic review of learning through case comparisons and the conditions under which it helps."
+
+  - key: problem_solving_before_instruction
+    display_name: "Problem solving before instruction"
+    family: example_based_and_problem_first
+    definition: >-
+      The learner is asked to attempt a problem targeting a concept they have
+      not been taught, and the canonical instruction that follows builds on the
+      learner's own attempted solutions.
+    evidence_grade: C
+    evidence_grade_rationale: >-
+      A meta-analysis reports a moderate benefit (g = 0.36), but the effect
+      reverses for younger learners and domain-general skills, cognitive-load
+      researchers report the opposite ordering under high element interactivity,
+      and the design is difficult to implement with fidelity. Credible
+      specialists disagree; the atlas records both sides rather than picking one.
+    evidence_level: enacted_output
+    output_types: [curriculum_plan, dialogue_episode, explanation_text]
+    required_context:
+      - "confirmation that the target concept has not yet been taught"
+      - "the instruction phase that follows, and whether it references learner-generated solutions"
+      - "learner age or grade level, because the sign of the effect depends on it"
+    sibling_confusable:
+      key: pretest_prequestion
+      discriminator: >-
+        A prequestion asks for a brief guess at a fact or outcome. Problem
+        solving before instruction asks for a sustained attempt at generating a
+        SOLUTION METHOD, and its follow-up instruction is built on the attempts
+        that were produced. Scale and consequentiality separate them.
+    boundary_conditions:
+      - "Meta-analytic effects favored instruction-first for grades 2 to 5 and for domain-general skills; the sign reverses there."
+      - "Effects were larger when implemented with high fidelity to productive-failure design principles, meaning the follow-up instruction must build on learners' failed or suboptimal solutions."
+      - "Cognitive-load researchers report the opposite ordering when element interactivity is high and learners lack prerequisite knowledge."
+      - "Unresolved struggle is not this construct. Without the consolidating instruction, it is unguided discovery, which the evidence does not support."
+    positive_anchor: >-
+      "Before I show you the standard deviation formula, invent a measure of how
+      spread out these two datasets are and write it down", followed by
+      instruction that contrasts the learners' invented measures with the
+      canonical one.
+    hard_negative: >-
+      "Try it yourself first" followed by instruction that ignores what the
+      learner produced and delivers the canonical method unchanged. Struggle
+      followed by unconnected telling is the low-fidelity version whose effects
+      are markedly smaller.
+    says_only_negative: >-
+      "Letting students grapple with a problem before teaching the solution
+      leads to deeper understanding." Advocacy without a problem-first design.
+    surface_confounds:
+      - "the words 'try', 'struggle', 'explore', 'discover'"
+      - "position of the first question in the artifact"
+      - "absence of explanation, which is also what an unhelpful artifact looks like"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.40 - 0.55"
+      basis: >-
+        Ordering is checkable; fidelity (does the instruction build on learner
+        solutions) requires judgment and is where raters will split.
+      failure_mode: >-
+        Raters conflate any invitation to attempt with the full design. The
+        guide splits presence (ordering) from fidelity (does instruction use the
+        attempts), so the ordinal captures what the binary cannot.
+    reward_eligibility:
+      status: measurement_only
+      rationale: >-
+        Grade C with a sign that reverses by age and domain. Rewarding a
+        contested ordering would encode one side of a live disagreement into a
+        policy, and the reversal conditions are exactly the ones a single turn
+        cannot observe.
+      guard: "Collect and report; do not optimize. Revisit if the disagreement resolves."
+    citations:
+      - ref: "Sinha & Kapur (2021), Review of Educational Research"
+        doi: "10.3102/00346543211019105"
+        claim: "53 studies, 166 comparisons; g = 0.36 [0.20, 0.51] favoring problem-solving-first, rising to 0.37-0.58 under high productive-failure fidelity, but favoring instruction-first for grades 2-5 and domain-general skills."
+      - ref: "Kapur (2008), Cognition and Instruction"
+        doi: "10.1080/07370000802212669"
+        claim: "Original productive failure demonstration."
+      - ref: "Loibl, Roll & Rummel (2017), Educational Psychology Review"
+        doi: "10.1007/s10648-016-9379-x"
+        claim: "Specifies the mechanisms and the conditions under which problem-solving-first supports learning."
+      - ref: "Ashman, Kalyuga & Sweller (2020), Educational Psychology Review"
+        doi: "10.1007/s10648-019-09500-5"
+        claim: "Reports the opposite ordering under high element interactivity; the principal counter-evidence."
+      - ref: "Kirschner, Sweller & Clark (2006), Educational Psychologist"
+        doi: "10.1207/s15326985ep4102_1"
+        claim: "Argues minimally guided instruction underperforms; the framing critique this construct must be distinguished from."
+
+  # === Family 3: generative explanation ====================================
+
+  - key: self_explanation_prompt
+    display_name: "Self-explanation prompt"
+    family: generative_explanation
+    definition: >-
+      The artifact requires the learner to generate an explanation of material
+      currently available to them, beyond what the material states: why a step
+      is valid, how a principle applies, or what connects two ideas.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      A meta-analysis supports self-explanation prompts over unprompted study,
+      but the mathematics worked-examples meta-analysis found pairing them with
+      examples was a NEGATIVE moderator, and constraint analyses show benefits
+      depend on comparison condition. Downgraded from A for that interaction.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, worked_solution, explanation_text, assessment_item]
+    required_context:
+      - "the material the learner is being asked to explain"
+      - "what the material already states, to establish that the request goes beyond restatement"
+    sibling_confusable:
+      key: retrieval_practice_opportunity
+      discriminator: >-
+        Self-explanation is generative with the source OPEN; retrieval is
+        productive with the source CLOSED. "Why does this step work?" with the
+        example visible is self-explanation. "What were the three steps?" with
+        the example hidden is retrieval.
+    boundary_conditions:
+      - "In mathematics worked-example studies, adding self-explanation prompts reduced the examples' benefit rather than adding to it."
+      - "Benefits depend on the control condition; against an equally active comparison the advantage narrows."
+      - "Prompts that can be answered by restating the visible text are not self-explanation, however they are phrased."
+      - "escalation: explanation quality is learner_enactment and requires the learner's response plus a content rubric."
+    positive_anchor: >-
+      "Line 3 divides both sides by (x - 2). Why is that step allowed here, and
+      what would we have to check first?" The material is visible and the answer
+      is not in it.
+    hard_negative: >-
+      "Can you explain your answer?" The classic generic prompt: it names no
+      object, and the repository's own measurements found this class of vague
+      handover to be the specific case raters cannot score consistently, which
+      is why `hands_over` distinguishes named from unnamed handover.
+    says_only_negative: >-
+      "Students learn more when they explain the material to themselves as they
+      study." The finding reported, no explanation requested.
+    surface_confounds:
+      - "the word 'why'"
+      - "the word 'explain'"
+      - "question marks, which are the dominant lexical confound for this whole family"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.45 - 0.60"
+      basis: >-
+        Whether the answer is recoverable from the visible text is checkable;
+        whether a prompt demands real inference is the split point. This
+        repository reframed a related construct from 'how much thinking does
+        this ask for' (kappa 0.09-0.34 across three studies) to 'does it hand
+        over the next move, and name it' (0.55-0.66). Use the behavioral form.
+      failure_mode: "Raters mark any 'why' question. The guide requires naming the specific inference demanded."
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Enacted and behaviorally phrasable, with a moderate but real reliability expectation."
+      guard: >-
+        A withholding-adjacent measure with a known degenerate optimum: a bare
+        one-line question maxes handover, actionability, and concision at once.
+        Reward only with a paired contribution measure and a named-object
+        requirement.
+    citations:
+      - ref: "Bisra, Liu, Nesbit, Salimi & Winne (2018), Educational Psychology Review"
+        doi: "10.1007/s10648-018-9434-x"
+        claim: "Meta-analysis of self-explanation prompts against unprompted controls."
+      - ref: "Chi, Bassok, Lewis, Reimann & Glaser (1989), Cognitive Science"
+        doi: "10.1207/s15516709cog1302_1"
+        claim: "Original observation that spontaneous self-explanation distinguishes successful from unsuccessful example study."
+      - ref: "Rittle-Johnson & Loehr (2017), Psychonomic Bulletin & Review"
+        doi: "10.3758/s13423-016-1079-5"
+        claim: "Specifies constraints on when eliciting explanations aids learning, including comparison-condition dependence."
+      - ref: "Barbieri, Miller-Cotto, Clerjuste & Chawla (2023), Educational Psychology Review"
+        doi: "10.1007/s10648-023-09745-1"
+        claim: "Self-explanation prompts were a negative moderator of the worked-examples effect in mathematics."
+
+  - key: teach_back_elicitation
+    display_name: "Teach-back elicitation"
+    family: generative_explanation
+    definition: >-
+      The artifact requires the learner to produce an explanation addressed to
+      another audience, real or stipulated, under an expectation of teaching.
+      The audience orientation is what separates it from self-explanation.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Two meta-analyses find small-to-moderate benefits, with the effect
+      dependent on teaching expectancy being established before study and on
+      interactivity of the teaching episode.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, assessment_item, dialogue_episode]
+    required_context:
+      - "the stipulated audience"
+      - "whether teaching expectancy was set BEFORE the learner studied, which is the moderator that decides the effect"
+    sibling_confusable:
+      key: self_explanation_prompt
+      discriminator: >-
+        Self-explanation is self-addressed; teach-back is other-addressed and
+        obliges the learner to model an audience's knowledge. "Explain why this
+        works" versus "Explain this to a classmate who missed the lesson."
+    boundary_conditions:
+      - "Teaching after studying WITH teaching expectancy shows a clear benefit; teaching after studying WITHOUT prior expectancy has been estimated at essentially zero."
+      - "Interactive teaching (with questions from the audience) outperforms non-interactive explanation."
+      - "The benefit accrues to the TEACHER. This construct says nothing about the audience's learning."
+      - "escalation: explanation quality and knowledge-building versus knowledge-telling is learner_enactment."
+    positive_anchor: >-
+      "You are about to explain this to a classmate who missed today. Write the
+      explanation you would give them, including the part they are most likely
+      to get wrong."
+    hard_negative: >-
+      "Summarize what we covered." Production is required and there is no
+      audience to model, so the audience-orientation that carries the effect is
+      absent. Summarization is a different and weaker technique.
+    says_only_negative: >-
+      "The best way to learn something is to teach it." The maxim, with no
+      teaching task assigned.
+    surface_confounds:
+      - "the word 'teach' or 'explain to'"
+      - "second-person framing"
+      - "requested output length"
+    labelability:
+      band: high
+      expected_kappa_w: "0.60 - 0.75"
+      basis: "The presence of a stipulated audience is a concrete textual feature."
+      failure_mode: "Raters accept 'explain' without an audience. The guide requires quoting the audience."
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Structurally checkable and enacted."
+      guard: >-
+        Prior-expectancy is the moderator that determines whether the effect
+        exists, and a single turn cannot establish it. Report expectancy as
+        unknown rather than assuming it.
+    citations:
+      - ref: "Kobayashi (2019), Japanese Psychological Research"
+        doi: "10.1111/jpr.12221"
+        claim: "28 studies; g = 0.35 for preparing-to-teach and g = 0.56 for teaching with preparation, relative to studying without teaching expectancy. Interactive teaching outperformed non-interactive."
+      - ref: "Fiorella & Mayer (2013), Contemporary Educational Psychology"
+        doi: "10.1016/j.cedpsych.2013.06.001"
+        claim: "Separates teaching expectancy from actually teaching; actual explaining produced the durable advantage."
+      - ref: "Roscoe & Chi (2007), Review of Educational Research"
+        doi: "10.3102/0034654307309920"
+        claim: "Distinguishes knowledge-building from knowledge-telling in tutor explanations; teaching does not automatically produce the former."
+      - ref: "Chase, Chin, Oppezzo & Schwartz (2009), Journal of Science Education and Technology"
+        doi: "10.1007/s10956-009-9180-4"
+        claim: "Teachable-agent protege effect; learners work harder for an agent than for themselves."
+
+  - key: icap_engagement_class
+    display_name: "ICAP class of the requested activity"
+    family: generative_explanation
+    definition: >-
+      Classification of the activity the artifact REQUESTS into passive,
+      active, constructive, or interactive. A category label on the request,
+      reported as a category and never averaged as an interval scale.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      The ordinal prediction that interactive exceeds constructive exceeds
+      active exceeds passive is supported across classroom translations, but
+      ICAP is a classification framework rather than an intervention, and its
+      boundaries are known to be difficult to apply consistently.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, assessment_item, practice_item_set, explanation_text]
+    required_context:
+      - "the full request, including what output format is expected"
+      - "whether a partner or interlocutor is available, which is what makes interactive possible"
+    sibling_confusable:
+      key: self_explanation_prompt
+      discriminator: >-
+        Self-explanation is one specific constructive activity. ICAP is the
+        containing taxonomy. Every self-explanation prompt is constructive; not
+        every constructive request is self-explanation.
+    boundary_conditions:
+      - "The ordinal claim is about categories, not a numeric scale; averaging ICAP codes across items produces a number with no interpretation."
+      - "Interactive requires a genuine partner who can respond substantively; a scripted or non-responsive interlocutor is constructive at best."
+      - "A REQUEST at a given level does not establish engagement at that level, which is the framework's own caution."
+      - "escalation: realized engagement class is learner_enactment and must be coded from the learner's behavior, not the invitation."
+    positive_anchor: >-
+      Coding "constructive" for a request that requires the learner to produce
+      output containing information beyond what was presented, with the specific
+      novel inference nameable by the rater.
+    hard_negative: >-
+      Coding "constructive" for a request to restate or summarize presented
+      material. Producing text is not producing new inference; that is active.
+    says_only_negative: >-
+      "Interactive activities produce more learning than constructive, active,
+      or passive ones." The framework recited; the artifact requests reading.
+    surface_confounds:
+      - "output length requested"
+      - "presence of dialogue formatting"
+      - "imperative verbs like 'create' or 'design' regardless of whether new inference is required"
+    labelability:
+      band: low
+      expected_kappa_w: "0.30 - 0.50 without adjudication"
+      basis: >-
+        Cognitive-demand style codes have scored kappa 0.09-0.34 across three
+        independent annotation studies in this literature. The active-versus-
+        constructive boundary is where raters split.
+      failure_mode: >-
+        Raters read 'constructive' as 'produces text'. Mandatory: the rater must
+        name the inference that goes beyond the presented material, or code
+        active.
+    reward_eligibility:
+      status: not_eligible_unreliable
+      rationale: >-
+        Expected agreement below the 0.40 floor, and it is an ordinal category
+        set that a reward would silently treat as an interval scale.
+      guard: "Report as four counts per arm. Never average, never regress on it."
+    citations:
+      - ref: "Chi & Wylie (2014), Educational Psychologist"
+        doi: "10.1080/00461520.2014.965823"
+        claim: "The ICAP hypothesis and its ordinal prediction over engagement modes."
+      - ref: "Chi, Adams, Bogusch, Bruchok, Kang et al. (2018), Cognitive Science"
+        doi: "10.1111/cogs.12626"
+        claim: "Classroom translation of ICAP, including the difficulty teachers have applying the active/constructive boundary."
+
+  # === Family 4: feedback and assistance ===================================
+
+  - key: elaborated_feedback_specificity
+    display_name: "Elaborated feedback specificity"
+    family: feedback_and_assistance
+    definition: >-
+      Feedback that goes beyond a verdict to identify the specific element of
+      the learner's work that departs from the reference, and why. Scored on
+      what the feedback CONTAINS, checked against a supplied reference solution.
+    evidence_grade: A
+    evidence_grade_rationale: >-
+      Multiple large meta-analyses converge on an ordering of feedback types,
+      with elaborated feedback outperforming knowledge of the correct response,
+      which outperforms bare correctness. Also the best-documented case of
+      feedback interventions HARMING performance, which the grade must reflect.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, worked_solution, dialogue_episode]
+    required_context:
+      - "the learner's work being responded to"
+      - "the reference solution, to check the feedback against rather than re-deriving it"
+      - "the location of the first causal error, where the dataset supplies it"
+    sibling_confusable:
+      key: answer_withholding_level
+      discriminator: >-
+        These are orthogonal axes on the same turn and must be scored
+        separately. Feedback can be highly elaborated while withholding the
+        answer (explain the error, do not state the fix) or unelaborated while
+        giving it away (state the answer, diagnose nothing). Collapsing them is
+        how a rubric ends up rewarding silence.
+    boundary_conditions:
+      - "Across 70 effect sizes in computer-based settings, elaborated feedback d = 0.49, knowledge of correct response d = 0.32, and bare correctness d = 0.05."
+      - "Over one third of feedback interventions in the classic meta-analysis DECREASED performance; feedback directed at the self rather than the task is the main culprit."
+      - "Feedback timing effects are genuinely mixed and are not part of this construct."
+      - "Accuracy is a separate judgment. Confident, specific, and wrong is the worst case and must not score high here."
+    positive_anchor: >-
+      "In line 2 you distributed the exponent across the sum: (a+b)^2 became
+      a^2+b^2. That step is where it diverges from the reference, because
+      squaring is not distributive over addition."
+    hard_negative: >-
+      "Good effort, but check your algebra in the middle there and try again."
+      Specific-sounding, locates nothing, and would fit any incorrect algebra
+      attempt in any problem. Generic near-misses are the dominant failure.
+    says_only_negative: >-
+      "Effective feedback tells students where they are, where they are going,
+      and how to close the gap." Hattie and Timperley's framework recited to a
+      learner in place of feedback on their work.
+    surface_confounds:
+      - "token overlap with the learner's message, which alone predicts human uptake labels at r = 0.52 and makes parroting a winning strategy"
+      - "artifact length"
+      - "presence of quoted spans from the learner's work"
+      - "hedging and politeness markers"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.45 - 0.65"
+      basis: >-
+        Pointing at the specific element is checkable. This repository's `locates`
+        dimension cleared its 0.4 gate; its holistic cousins did not.
+      failure_mode: >-
+        Raters credit re-explaining the correct method as locating the error.
+        The guide separates 'points at the problem' from 'points at the student's
+        specific step', which is the distinction that made the dimension work.
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: >-
+        The strongest CONTRIBUTION measure in the atlas and the required pairing
+        partner for every withholding measure.
+      guard: >-
+        Must be scored jointly with an accuracy check against the reference.
+        A weak correctness signal in a reward plausibly teaches confident-
+        sounding rather than correct, and nothing else in the atlas would catch it.
+    citations:
+      - ref: "Van der Kleij, Feskens & Eggen (2015), Review of Educational Research"
+        doi: "10.3102/0034654314564881"
+        claim: "Elaborated feedback d = 0.49, knowledge of correct response d = 0.32, knowledge of results d = 0.05 in computer-based environments."
+      - ref: "Kluger & DeNisi (1996), Psychological Bulletin"
+        doi: "10.1037/0033-2909.119.2.254"
+        claim: "Feedback interventions improved performance on average, but over a third reduced it; attention directed to the self is the harmful case."
+      - ref: "Hattie & Timperley (2007), Review of Educational Research"
+        doi: "10.3102/003465430298487"
+        claim: "Feedback levels framework: task, process, self-regulation, self; the self level is least effective."
+      - ref: "Shute (2008), Review of Educational Research"
+        doi: "10.3102/0034654307313795"
+        claim: "Synthesis of formative-feedback design features and their interaction with learner ability."
+      - ref: "Wisniewski, Zierer & Hattie (2020), Frontiers in Psychology"
+        doi: "10.3389/fpsyg.2019.03087"
+        claim: "Meta-analysis finding information-rich feedback substantially outperforms simple reinforcement or correction."
+
+  - key: answer_withholding_level
+    display_name: "Answer withholding level"
+    family: feedback_and_assistance
+    definition: >-
+      How much of the learner's remaining work the artifact performs for them,
+      on an ordinal scale from withholding entirely to supplying the answer.
+      Deliberately independent of whether the supplied content is correct.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Assistance level is a well-studied design variable with a documented
+      trade-off (the assistance dilemma) rather than an optimum. The evidence
+      supports "it matters and it is not monotone", which is precisely why the
+      construct is retained and why maximizing it is not.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, worked_solution, dialogue_episode]
+    required_context:
+      - "the problem and its reference solution"
+      - "what the learner has already produced, to establish what work remains"
+    sibling_confusable:
+      key: contingent_help_calibration
+      discriminator: >-
+        Withholding level is an absolute property of the turn. Contingency is
+        the MATCH between that level and what the learner has demonstrated. A
+        turn can withhold heavily and be badly contingent, if the learner had no
+        foothold. Score the level here and the match there.
+    boundary_conditions:
+      - "NOT MONOTONE. Lower assistance is not better. The assistance dilemma is an explicit statement that the optimum is interior and depends on the learner."
+      - "A turn that confidently states a WRONG answer takes the work away AND misleads; it must score as maximal withholding failure, not as a middle value. An earlier version of this scale in this repository put that case in the middle by accident."
+      - "High-assistance turns are appropriate for a learner with no foothold; treating this as a quality score inverts that."
+    positive_anchor: >-
+      Scoring 0 (withholds entirely) for a turn that offers a principle or a
+      question and leaves every remaining step to the learner.
+    hard_negative: >-
+      Scoring a turn as withholding because it is SHORT. Length is the dominant
+      confound: agent raters in this repository tied leakage to length at r =
+      0.59 against a human's 0.43, and got a policy comparison backwards as a result.
+    says_only_negative: >-
+      "I won't just give you the answer, because you learn more by working it
+      out." Meta-commentary about withholding, which is itself neither
+      withholding nor giving, and frequently precedes giving it away.
+    surface_confounds:
+      - "turn length, the strongest confound in the atlas for this construct"
+      - "presence of a final numeric value anywhere in the turn"
+      - "question marks"
+      - "hedging language, which reads as withholding while the answer is present"
+    labelability:
+      band: high
+      expected_kappa_w: "0.55 - 0.70"
+      basis: "Measured at 69% exact agreement between two careful raters in this repository, against 39% for holistic quality."
+      failure_mode: >-
+        Raters score correctness instead of leakage. The scale is explicitly
+        indifferent to whether the given answer is right; correctness is scored
+        by elaborated_feedback_specificity.
+    reward_eligibility:
+      status: not_eligible_degenerate
+      rationale: >-
+        The clearest degenerate optimum in the atlas. A reward that pays for
+        withholding is maximized by saying nothing, and this repository has the
+        receipts: dimensions built on withholding had an effective rank of 2.9,
+        their joint optimum was a 12-word question, and a trained policy found it.
+      guard: >-
+        Usable only as a COVARIATE, or inside a scenario-conditioned match
+        (see contingent_help_calibration) where the target level is prescribed
+        per scenario rather than minimized.
+    citations:
+      - ref: "Koedinger & Aleven (2007), Educational Psychology Review"
+        doi: "10.1007/s10648-007-9049-0"
+        claim: "The assistance dilemma: giving and withholding information both have costs, and the optimum is interior and learner-dependent."
+      - ref: "Aleven, Stahl, Schworm, Fischer & Wallace (2003), Review of Educational Research"
+        doi: "10.3102/00346543073003277"
+        claim: "Review of help seeking and help design; availability of answers changes learner strategy."
+      - ref: "Aleven, Roll, McLaren & Koedinger (2016), International Journal of Artificial Intelligence in Education"
+        doi: "10.1007/s40593-015-0089-1"
+        claim: "Help helps, but only so much; unrestricted help access is exploited rather than used."
+      - ref: "Baker, Corbett, Koedinger & Wagner (2004), CHI"
+        doi: "10.1145/985692.985741"
+        claim: "Learners game hint systems to extract answers, which is the behavioral form of this construct's failure mode."
+
+  - key: contingent_help_calibration
+    display_name: "Contingent help calibration"
+    family: feedback_and_assistance
+    definition: >-
+      Whether the amount and form of help match what the learner has just
+      demonstrated. Scored as a match against a scenario-prescribed target
+      level, not as a preference for less help.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Contingency is the defining property of scaffolding in the review
+      literature and has direct classroom evidence, but effects are entangled
+      with independent working time and are hard to isolate.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, dialogue_episode]
+    required_context:
+      - "the learner's immediately preceding state, coded independently (no attempt / attempt / attempt with reasoning)"
+      - "the prescribed help level for that state in this scenario"
+      - "the observed help level"
+    sibling_confusable:
+      key: answer_withholding_level
+      discriminator: >-
+        Withholding is measured on the tutor turn alone. Contingency is a lookup
+        over the PAIR (learner state, help level) and cannot be scored without
+        the learner-side code.
+    boundary_conditions:
+      - "Requires a learner turn. On artifacts with no preceding learner state, mark not_applicable rather than scoring."
+      - "Lower help is not inherently better; a learner with no foothold can need more explicit support than one who has shown the relevant reasoning."
+      - "One turn measures matching only. Escalation after failure and fading after success are trajectory properties and belong to guidance_fading_sequence."
+      - "Tutors agree poorly on which action was appropriate: three tutors pick the same action in 18% of cases, and a tutor agrees with outside raters about their own move at kappa 0.34. The prescribed target must come from the scenario design, never from rater intuition."
+    positive_anchor: >-
+      Learner shows a reasoned attempt with one flawed step; the scenario
+      prescribes a strategy hint; the turn delivers a strategy hint. Match.
+    hard_negative: >-
+      A turn that withholds heavily after a learner has said "I have no idea
+      where to start" twice. Maximal withholding scored as good scaffolding is
+      the specific inversion this construct exists to catch.
+    says_only_negative: >-
+      "I'll adjust how much help I give based on where you are." Announced
+      contingency, followed by the same help level regardless of learner state.
+    surface_confounds:
+      - "turn length"
+      - "politeness and encouragement markers"
+      - "the tutor's own claim about what it is doing"
+    labelability:
+      band: context_dependent
+      expected_kappa_w: "0.55 - 0.70 with a prescribed target; unusable without one"
+      basis: >-
+        With a scenario-prescribed target it reduces to two codes and an
+        equality check. Without one it becomes 'which strategy should the tutor
+        have used', which agrees at 18%.
+      failure_mode: >-
+        Raters supply their own target. The guide forbids this: if the scenario
+        does not prescribe a level, the item is not_applicable.
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: >-
+        The only construct here whose optimum a fixed policy cannot reach by
+        style alone, because the target moves with the learner. That makes it
+        the most valuable and the hardest to fake.
+      guard: >-
+        Prescribed targets must come from the dataset. A proxy target inferred
+        by a model reintroduces the 18%-agreement problem with a machine-made
+        answer key.
+    citations:
+      - ref: "van de Pol, Volman & Beishuizen (2010), Educational Psychology Review"
+        doi: "10.1007/s10648-010-9127-6"
+        claim: "Review establishing contingency, fading, and transfer of responsibility as the defining features of scaffolding."
+      - ref: "van de Pol, Volman, Oort & Beishuizen (2015), Instructional Science"
+        doi: "10.1007/s11251-015-9351-z"
+        claim: "Classroom study separating contingency from independent working time."
+      - ref: "Wood, Bruner & Ross (1976), Journal of Child Psychology and Psychiatry"
+        doi: "10.1111/j.1469-7610.1976.tb00381.x"
+        claim: "Original scaffolding formulation and the contingent-shift rule."
+      - ref: "VanLehn (2011), Educational Psychologist"
+        doi: "10.1080/00461520.2011.611369"
+        claim: "Compares human tutoring, intelligent tutoring systems, and other conditions; interaction granularity effects are smaller than commonly assumed."
+
+  - key: expertise_reversal_adaptation
+    display_name: "Expertise-reversal adaptation"
+    family: feedback_and_assistance
+    definition: >-
+      Whether the artifact's guidance level is adapted to the learner's stated
+      prior knowledge in the direction the evidence requires: heavy guidance for
+      novices, reduced guidance for the more expert.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      The reversal is well replicated across several instructional techniques
+      and is a core prediction of cognitive load theory, but it is usually
+      demonstrated by aptitude-treatment interaction rather than by evaluating a
+      single artifact, which limits how much a single-artifact label can carry.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, explanation_text, worked_solution, curriculum_plan]
+    required_context:
+      - "an explicit statement of learner prior knowledge or expertise level; without it the construct is unscoreable"
+      - "the guidance level actually delivered"
+    sibling_confusable:
+      key: contingent_help_calibration
+      discriminator: >-
+        Contingency responds to what the learner demonstrated IN THIS EPISODE.
+        Expertise reversal responds to their standing knowledge level. Same
+        direction of adjustment, different evidence, different time scale.
+    boundary_conditions:
+      - "Techniques that help novices (worked examples, extensive guidance, redundant explanation) can HARM more knowledgeable learners; the sign genuinely flips."
+      - "The reversal is about instructional guidance interacting with prior knowledge, not about difficulty preference."
+      - "Requires a stated expertise level. Inferring expertise from the learner's tone or vocabulary is exactly the latent inference the atlas excludes."
+    positive_anchor: >-
+      A scenario declaring the learner has already mastered the procedure, met
+      by a turn that drops the full worked solution in favor of a targeted
+      prompt for the one novel element.
+    hard_negative: >-
+      A full worked example delivered to a declared expert, in a form that
+      re-explains what they have demonstrated they know. This is the reversal
+      failure and it must be scored as such, not as thoroughness.
+    says_only_negative: >-
+      "What works for beginners can actually slow down advanced learners."
+      A correct statement of the reversal, followed by identical guidance for
+      every learner in the same artifact set.
+    surface_confounds:
+      - "artifact length"
+      - "technical vocabulary density, which reads as 'advanced'"
+      - "explicit difficulty labels in the artifact"
+    labelability:
+      band: context_dependent
+      expected_kappa_w: "0.45 - 0.65 with a declared expertise level; unusable without one"
+      basis: "Reduces to comparing two declared values once the scenario states expertise."
+      failure_mode: >-
+        Raters infer expertise from the learner's writing style. The guide makes
+        a missing expertise declaration an automatic not_applicable.
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Scoreable when expertise is declared, and it penalizes exactly the over-explaining that a contribution-only reward would encourage."
+      guard: "Only on items where expertise is a dataset field. Never infer it from the artifact."
+    citations:
+      - ref: "Kalyuga, Ayres, Chandler & Sweller (2003), Educational Psychologist"
+        doi: "10.1207/S15326985EP3801_4"
+        claim: "States and reviews the expertise reversal effect across instructional techniques."
+      - ref: "Kalyuga (2007), Educational Psychology Review"
+        doi: "10.1007/s10648-007-9054-3"
+        claim: "Expertise reversal and its implications for adaptive, faded instruction."
+      - ref: "Sweller, van Merrienboer & Paas (2019), Educational Psychology Review"
+        doi: "10.1007/s10648-019-09465-5"
+        claim: "Twenty-year update on cognitive architecture and the effects, including reversal, that follow from it."
+
+  # === Family 5: metacognitive and motivational framing ====================
+
+  - key: metacognitive_regulation_prompt
+    display_name: "Metacognitive regulation prompt"
+    family: metacognitive_and_motivational
+    definition: >-
+      The artifact requires the learner to plan, monitor, or evaluate their own
+      cognition about a NAMED task object: select a strategy and say why, check
+      a specific intermediate result, or judge which part is not yet understood.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Several meta-analyses find positive effects of strategy and self-regulation
+      instruction, with the important qualification that long-term follow-up
+      effects are substantially smaller than immediate ones.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, assessment_item, explanation_text, curriculum_plan]
+    required_context:
+      - "the task the regulation refers to"
+      - "confirmation that a specific object is named rather than a generic exhortation"
+    sibling_confusable:
+      key: confidence_calibration_elicitation
+      discriminator: >-
+        Regulation asks the learner to CHOOSE or CHECK something. Calibration
+        asks them to RATE their certainty and then compares that rating with
+        performance. "Which method will you use and why" is regulation; "how
+        confident are you, 0 to 100" is calibration.
+    boundary_conditions:
+      - "Long-term effects of metacognitive strategy instruction are markedly smaller than immediate post-test effects."
+      - "Effects are larger when strategy instruction is embedded in domain content than when taught as a generic study skill."
+      - "Generic exhortations to 'think about your thinking' have no named object and carry none of the evidence."
+      - "escalation: whether regulation changed the learner's subsequent study choices is learner_enactment and requires behavior logs."
+    positive_anchor: >-
+      "Before you start: which of the two methods we covered applies here, and
+      what feature of the problem tells you that?"
+    hard_negative: >-
+      "Make sure you really understand this before moving on." An instruction to
+      self-monitor with no object, no criterion, and no producible response.
+    says_only_negative: >-
+      "Strong learners monitor their own understanding as they go." The research
+      finding delivered as content, prompting no regulation.
+    surface_confounds:
+      - "the words 'think', 'reflect', 'consider', 'understand'"
+      - "second-person imperatives"
+      - "position at the start or end of an artifact"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.45 - 0.60"
+      basis: "The named-object requirement makes it pointable; without that requirement this class of construct performs poorly."
+      failure_mode: "Raters mark generic exhortations. The guide requires quoting the named object."
+    reward_eligibility:
+      status: eligible_with_guard
+      rationale: "Behaviorally phrasable with a named object."
+      guard: >-
+        Cheap to emit and easy to bolt onto any turn. Requires a per-artifact cap
+        or a saturation check, or a policy will simply append a reflection
+        question to everything.
+    citations:
+      - ref: "Dignath & Buttner (2008), Metacognition and Learning"
+        doi: "10.1007/s11409-008-9029-x"
+        claim: "Meta-analysis of self-regulated learning interventions in primary and secondary school."
+      - ref: "Donker, de Boer, Kostons, Dignath van Ewijk & van der Werf (2014), Educational Research Review"
+        doi: "10.1016/j.edurev.2013.11.002"
+        claim: "Meta-analysis of learning-strategy instruction; metacognitive strategies show positive effects on academic performance."
+      - ref: "de Boer, Donker, Kostons & van der Werf (2018), Educational Research Review"
+        doi: "10.1016/j.edurev.2018.03.002"
+        claim: "Long-term follow-up effects of metacognitive strategy instruction are considerably smaller than immediate effects."
+
+  - key: confidence_calibration_elicitation
+    display_name: "Confidence calibration elicitation"
+    family: metacognitive_and_motivational
+    definition: >-
+      The artifact elicits a confidence or learning judgment BEFORE the correct
+      answer is revealed, in a form that can later be compared against measured
+      accuracy.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      Calibration and its systematic failures are extremely well documented, and
+      judgment timing has meta-analytic support. The weaker link is whether
+      eliciting judgments improves learning, where reactivity effects are small.
+    evidence_level: enacted_output
+    output_types: [assessment_item, tutor_turn, practice_item_set]
+    required_context:
+      - "the answer's position relative to the judgment; the judgment must precede the reveal"
+      - "a scorable accuracy outcome for the same item, or calibration is uncomputable"
+    sibling_confusable:
+      key: metacognitive_regulation_prompt
+      discriminator: "Calibration produces a RATING to be compared with accuracy. Regulation produces a CHOICE or CHECK. If nothing can be scored against performance, it is not calibration."
+    boundary_conditions:
+      - "A single confidence statement cannot measure calibration. Calibration is a relationship between judgments and outcomes over many items."
+      - "Delayed judgments of learning are substantially more accurate than immediate ones; timing is part of the manipulation."
+      - "Learners are systematically overconfident, and overconfidence predicts undertermination of study; the elicitation is diagnostic before it is therapeutic."
+      - "Reactivity effects of making judgments are small and not a reliable route to learning gains."
+      - "escalation: the calibration statistic itself (Brier score, over/underconfidence) is learner_enactment and needs many paired judgments."
+    positive_anchor: >-
+      "Write your answer, then rate 0-100 how sure you are it is right. I will
+      show you the answer after you have both." Judgment precedes reveal and is
+      paired with a scorable response.
+    hard_negative: >-
+      "Are you confident about that?" asked after the answer has been confirmed
+      correct. A confidence word with nothing to calibrate against.
+    says_only_negative: >-
+      "Students are usually more confident than they should be, so it helps to
+      check yourself." The finding taught; no judgment elicited.
+    surface_confounds:
+      - "the word 'confident' or 'sure'"
+      - "presence of a numeric scale anywhere"
+      - "question marks"
+    labelability:
+      band: high
+      expected_kappa_w: "0.60 - 0.75"
+      basis: "Ordering and the presence of a ratable judgment are both concrete."
+      failure_mode: "Raters accept post-reveal confidence checks. Order is the discriminator and the guide states it as a hard test."
+    reward_eligibility:
+      status: measurement_only
+      rationale: >-
+        Cheap to emit, and the evidence that eliciting judgments improves
+        learning is weak even though the diagnostic value is high. Rewarding it
+        buys confidence sliders, not calibration.
+      guard: "Collect for calibration analysis; never optimize."
+    citations:
+      - ref: "Dunlosky & Rawson (2012), Learning and Instruction"
+        doi: "10.1016/j.learninstruc.2011.08.003"
+        claim: "Overconfidence in judgments of learning produces premature termination of study and lower achievement."
+      - ref: "Rhodes & Tauber (2011), Psychological Bulletin"
+        doi: "10.1037/a0021705"
+        claim: "Meta-analysis: delaying judgments of learning substantially improves metacognitive accuracy."
+      - ref: "Bjork, Dunlosky & Kornell (2013), Annual Review of Psychology"
+        doi: "10.1146/annurev-psych-113011-143823"
+        claim: "Review of self-regulated learning illusions, including fluency-driven misjudgment."
+      - ref: "Double, Birney & Walker (2018), Memory"
+        doi: "10.1080/09658211.2017.1404111"
+        claim: "Meta-analysis of reactivity to judgments of learning; effects on performance are small."
+
+  - key: attributional_feedback_framing
+    display_name: "Attributional feedback framing"
+    family: metacognitive_and_motivational
+    definition: >-
+      Whether the artifact attributes the learner's outcome to a controllable,
+      changeable cause (strategy choice, specific effort directed at a named
+      step) rather than to a stable personal trait, in either direction.
+    evidence_grade: D
+    evidence_grade_rationale: >-
+      The theoretical account is well developed and the harm of self-directed
+      feedback is meta-analytically supported, but the specific claim that
+      re-framing attributions in a tutoring turn improves learning rests on
+      evidence that is small, old, heterogeneous, and adjacent to the mindset
+      literature whose best-quality subset shows effects near zero. Retained as
+      a MEASURED construct and a negative control, not as a target.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, dialogue_episode]
+    required_context:
+      - "the learner outcome being attributed"
+      - "the full turn, since attribution is carried by clause-level phrasing"
+    sibling_confusable:
+      key: elaborated_feedback_specificity
+      discriminator: >-
+        Elaborated feedback is about WHERE the error is. Attributional framing
+        is about WHAT KIND OF CAUSE the turn assigns to it. "Line 2 divides by
+        zero" is localization; "that happens when you rush" is attribution.
+        A turn can be strong on one and absent on the other.
+    boundary_conditions:
+      - "Feedback directed at the SELF rather than the task is the case most associated with reduced performance, so trait praise is a plausible harm and not merely a neutral choice."
+      - "Person praise versus process praise findings come largely from a small number of laboratories and have not been robustly replicated at scale."
+      - "Generic effort attribution unconnected to a strategy is not supported; attributing failure to insufficient effort when the learner's strategy was wrong is inaccurate feedback."
+      - "This construct is retained principally so that a reward trained on other constructs can be CHECKED for drift toward trait praise."
+    positive_anchor: >-
+      "That worked because you checked the units before substituting; that is the
+      step that usually decides these." Cause is a controllable, named action.
+    hard_negative: >-
+      "You're so good at this, you're a natural." Warm, apparently supportive,
+      and attributes the outcome to a fixed trait. This is the case the atlas
+      most wants labeled, because a reward optimizing warmth will produce it.
+    says_only_negative: >-
+      "It's better to praise students for their strategies than for being
+      smart." The recommendation stated, applied to nobody.
+    surface_confounds:
+      - "positive sentiment, which is nearly collinear with the presence of any praise"
+      - "exclamation marks"
+      - "second-person pronouns"
+    labelability:
+      band: low
+      expected_kappa_w: "0.30 - 0.50"
+      basis: >-
+        Adjacent constructs have performed poorly: tone and encouragement scored
+        Krippendorff alpha 0.24-0.30 in the annotation literature this project
+        draws on. Clause-level attribution is somewhat more concrete than tone
+        but sits in the same neighborhood.
+      failure_mode: >-
+        Raters score sentiment. The guide requires quoting the clause that names
+        the cause; if no clause names a cause, presence is 0 regardless of warmth.
+    reward_eligibility:
+      status: not_eligible_unreliable
+      rationale: >-
+        Grade D evidence and expected agreement near the 0.40 floor. Rewarding it
+        would mean rewarding praise phrasing, and praise-shaped rewards are the
+        best-documented way to make a feedback intervention harmful.
+      guard: "Use as a drift monitor on trained policies: a rising trait-praise rate is an alarm, never a target."
+    citations:
+      - ref: "Weiner (1985), Psychological Review"
+        doi: "10.1037/0033-295X.92.4.548"
+        claim: "Attributional theory of achievement motivation; locus, stability, and controllability as the causal dimensions."
+      - ref: "Kluger & DeNisi (1996), Psychological Bulletin"
+        doi: "10.1037/0033-2909.119.2.254"
+        claim: "Feedback that directs attention to the self is associated with reduced performance."
+      - ref: "Hattie & Timperley (2007), Review of Educational Research"
+        doi: "10.3102/003465430298487"
+        claim: "Feedback at the 'self' level is the least effective of the four levels."
+      - ref: "Macnamara & Burgoyne (2023), Psychological Bulletin"
+        doi: "10.1037/bul0000352"
+        claim: "Highest-quality growth-mindset studies show effects near zero, which constrains claims for adjacent trait-versus-process framings."
+
+  - key: utility_value_relevance_prompt
+    display_name: "Utility-value relevance prompt"
+    family: metacognitive_and_motivational
+    definition: >-
+      The artifact requires the LEARNER to generate a connection between the
+      material and their own life, goals, or interests. Learner generation is
+      definitional; an instructor-asserted application is a different thing.
+    evidence_grade: C
+    evidence_grade_rationale: >-
+      Randomized field experiments show real effects, but they are concentrated
+      in specific subgroups (learners with low performance expectations or from
+      underrepresented groups) with near-zero average effects elsewhere, and
+      follow-up work has produced mixed results.
+    evidence_level: enacted_output
+    output_types: [assessment_item, tutor_turn, curriculum_plan, explanation_text]
+    required_context:
+      - "who is generating the connection: the learner or the artifact"
+      - "learner subgroup information where the design depends on it, for interpretation only"
+    sibling_confusable:
+      key: self_explanation_prompt
+      discriminator: >-
+        Both require learner generation. Self-explanation generates content
+        about the MATERIAL's internal logic; utility value generates content
+        about the material's relevance to the LEARNER's life. Different target,
+        different evidence base.
+    boundary_conditions:
+      - "Learner-generated relevance is the manipulation that carries the evidence; directly telling learners why material is useful has performed worse and can backfire for low-confidence learners."
+      - "Effects concentrate in learners with low success expectancies; average effects across all learners are small."
+      - "Repeated, formulaic relevance prompts are not the intervention, which was administered a small number of times."
+    positive_anchor: >-
+      "Write a short paragraph connecting exponential growth to something you
+      personally care about, and explain the connection." The learner generates
+      the link.
+    hard_negative: >-
+      "Exponential growth matters because it explains compound interest and
+      viral spread, which affect all of us." A relevance assertion delivered TO
+      the learner. This is the condition that underperformed learner generation.
+    says_only_negative: >-
+      "Students engage more when they see how material connects to their own
+      lives." The principle, with no prompt to connect anything.
+    surface_confounds:
+      - "the words 'real world', 'relevant', 'matters', 'your life'"
+      - "presence of applied examples"
+      - "second-person address"
+    labelability:
+      band: high
+      expected_kappa_w: "0.60 - 0.75"
+      basis: "Who generates the connection is a concrete property of the request."
+      failure_mode: "Raters mark relevance assertions. The generator test resolves it and is stated as the primary discriminator."
+    reward_eligibility:
+      status: measurement_only
+      rationale: >-
+        Grade C with subgroup-concentrated effects and a documented backfire
+        condition. Also trivially spammable, and the intervention's own design
+        involves administering it rarely.
+      guard: "Report prevalence; do not optimize. A rising rate is a warning sign, not progress."
+    citations:
+      - ref: "Hulleman & Harackiewicz (2009), Science"
+        doi: "10.1126/science.1177067"
+        claim: "Learner-generated utility-value writing improved interest and grades for students with low success expectations."
+      - ref: "Harackiewicz, Canning, Tibbetts, Priniski & Hyde (2016), Journal of Personality and Social Psychology"
+        doi: "10.1037/pspp0000075"
+        claim: "Utility-value intervention narrowed achievement gaps for first-generation underrepresented-minority students."
+      - ref: "Rosenzweig, Wigfield & Hulleman (2020), Journal of Educational Psychology"
+        doi: "10.1037/edu0000370"
+        claim: "Mixed results for utility-value and cost-reduction interventions in college physics; effects are not uniform."
+
+  - key: autonomy_supportive_framing
+    display_name: "Autonomy-supportive framing"
+    family: metacognitive_and_motivational
+    definition: >-
+      The artifact provides meaningful rationale for a request, offers bounded
+      choice, uses informational rather than controlling language, or
+      acknowledges the learner's perspective, in place of directives and pressure.
+    evidence_grade: B
+    evidence_grade_rationale: >-
+      A meta-analysis of autonomy-support training programs and an extensive
+      review support the behavioral cluster's effects on motivation and
+      engagement; effects on achievement specifically are smaller and less direct.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, explanation_text, curriculum_plan, dialogue_episode]
+    required_context:
+      - "the request or constraint being framed"
+      - "the full turn, since the construct is a cluster of separately codable behaviors"
+    sibling_confusable:
+      key: attributional_feedback_framing
+      discriminator: >-
+        Autonomy support is about how a REQUEST is framed (rationale, choice,
+        informational language). Attribution is about how an OUTCOME is
+        explained. Both are motivational framing; they attach to different
+        objects in the turn.
+    boundary_conditions:
+      - "Friendly tone alone is not autonomy support; warmth and autonomy support are separable and only the latter has the supporting evidence."
+      - "Choice must be meaningful and bounded; excessive or trivial choice does not carry the effect."
+      - "Code the component behaviors (rationale, choice, informational language, perspective-taking) separately rather than as one impression."
+      - "Effects are strongest on motivation and engagement; the path to achievement is longer and weaker."
+    positive_anchor: >-
+      "We are doing three of these rather than one because the pattern only
+      shows up across cases. Would you rather start with the geometry one or the
+      algebra one?" Rationale plus bounded choice.
+    hard_negative: >-
+      "Great question! Now, you need to do all five of these before we move on,
+      okay?" Warm, enthusiastic, and entirely controlling. Politeness masking a
+      directive is the counterfeit this construct must separate out.
+    says_only_negative: >-
+      "Giving students a reason and some choice increases their motivation."
+      The principle, inside a turn that issues bare commands.
+    surface_confounds:
+      - "politeness markers, exclamation marks, and positive sentiment"
+      - "the word 'because', which appears in controlling rationales too"
+      - "presence of any question"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.40 - 0.60 when component-coded; lower as a single impression"
+      basis: >-
+        Component coding is pointable. As a global impression it converges with
+        tone, which has scored alpha 0.24-0.30 in this literature.
+      failure_mode: "Raters score friendliness. The guide requires at least one quoted component behavior."
+    reward_eligibility:
+      status: not_eligible_degenerate
+      rationale: >-
+        Nearly collinear with warmth and politeness at the surface level, and
+        rewarding warmth means rewarding praise. Cheap to emit and would
+        saturate immediately.
+      guard: "Component counts reported per arm as a descriptive covariate only."
+    citations:
+      - ref: "Su & Reeve (2011), Educational Psychology Review"
+        doi: "10.1007/s10648-010-9142-7"
+        claim: "Meta-analysis of interventions training autonomy-supportive behaviors; the behaviors are learnable and produce motivational gains."
+      - ref: "Reeve & Cheon (2021), Educational Psychologist"
+        doi: "10.1080/00461520.2020.1862657"
+        claim: "Review of autonomy-supportive teaching, its component behaviors, and its malleability."
+      - ref: "Patall, Cooper & Robinson (2008), Psychological Bulletin"
+        doi: "10.1037/0033-2909.134.2.270"
+        claim: "Meta-analysis of choice effects on intrinsic motivation, including conditions where more choice does not help."
+
+  - key: belonging_affirmation_framing
+    display_name: "Belonging-affirmation framing"
+    family: metacognitive_and_motivational
+    definition: >-
+      Framing that normalizes difficulty as a common, temporary part of the
+      transition rather than as evidence that this learner does not belong,
+      typically by attributing struggle to the situation and its timeline.
+    evidence_grade: C
+    evidence_grade_rationale: >-
+      A well-known randomized experiment with long-term follow-up plus a very
+      large multi-site replication, but the replication's central finding is
+      that effects are concentrated in specific institutional contexts and
+      subgroups rather than being general. Real, and highly conditional.
+    evidence_level: enacted_output
+    output_types: [tutor_turn, explanation_text, curriculum_plan]
+    required_context:
+      - "the difficulty or setback being framed"
+      - "institutional and population context where available, because it determines whether the intervention has any expected effect"
+    sibling_confusable:
+      key: attributional_feedback_framing
+      discriminator: >-
+        Belonging framing attributes struggle to the SITUATION and its timeline
+        ("most people find the first month hard"). Attributional framing
+        attributes an outcome to the learner's controllable actions ("your
+        strategy skipped the check"). Different causal target.
+    boundary_conditions:
+      - "The large multi-site test found benefits concentrated where institutional context supported them, not uniformly; a null in an unsupportive context is the expected result, not a failed replication."
+      - "The original intervention was delivered once, early, with a saying-is-believing component. A tutoring turn is not that delivery vehicle and inherits little of the evidence."
+      - "Reassurance is not belonging framing. Normalizing difficulty as common and temporary is the specific move, and both elements must be quotable."
+      - "escalation: belonging is a learner state and is not observable in the artifact. Only the FRAMING is labeled here."
+    positive_anchor: >-
+      "Almost everyone finds this unit disorienting for the first week or two,
+      and it stops feeling that way once the notation settles. Where exactly did
+      it stop making sense?" Difficulty normalized as common and temporary,
+      followed by task focus.
+    hard_negative: >-
+      "Don't worry, you've got this!" Encouragement with no normalization, no
+      timeline, and no task. Generic reassurance is the counterfeit.
+    says_only_negative: >-
+      "Students do better when they believe they belong in a course." The
+      finding stated as content.
+    surface_confounds:
+      - "positive sentiment and reassurance language"
+      - "first-person plural pronouns"
+      - "the words 'normal', 'everyone', 'don't worry'"
+    labelability:
+      band: moderate
+      expected_kappa_w: "0.40 - 0.60"
+      basis: "The two required elements (common and temporary) are quotable, which keeps it above pure tone coding."
+      failure_mode: "Raters mark reassurance. The guide requires both elements to be quotable before presence is marked."
+    reward_eligibility:
+      status: measurement_only
+      rationale: >-
+        Grade C with context-dependent effects, delivered in the literature by a
+        vehicle this artifact type does not resemble, and sentiment-confounded.
+      guard: "Prevalence reporting only. Never a reward term."
+    citations:
+      - ref: "Walton & Cohen (2011), Science"
+        doi: "10.1126/science.1198364"
+        claim: "Brief social-belonging intervention improved achievement and health outcomes for African American college students over three years."
+      - ref: "Walton, Murphy, Logel, Yeager et al. (2023), Science"
+        doi: "10.1126/science.ade4420"
+        claim: "Large multi-site test; effects on progress concentrated in institutional contexts and groups that support them rather than being uniform."
+      - ref: "Yeager, Hanselman, Walton, Murray et al. (2019), Nature"
+        doi: "10.1038/s41586-019-1466-y"
+        claim: "National randomized experiment showing small, heterogeneous, context-dependent effects for a related brief intervention."
+
+# ---------------------------------------------------------------------------
+# Excluded latent constructs.
+#
+# These matter instructionally. They are excluded because they cannot be read
+# off an artifact by a human who agrees with another human, which makes them
+# unusable as labels regardless of importance. Each records why, so nobody
+# re-proposes it on the theory that the wording just needed work. The reasons
+# come in two kinds and it is worth keeping them apart.
+#
+# Six carry a MEASURED agreement figure - motivation, correct_strategy,
+# tone_warmth, holistic_quality, uptake_revoicing, student_could_be_misled -
+# several of them measured in this repository directly. These could in principle
+# be rescued by a better question, and the numbers say how far one would have to
+# come.
+#
+# Five carry a STRUCTURAL impossibility instead - cognitive_load,
+# understanding_or_mastery, desirable_difficulty, retention_and_transfer,
+# realized_engagement. Nothing was measured on an artifact because the thing
+# named is not a property of an artifact. That is the stronger reason, not the
+# weaker one: no rewording reaches it, and `what_would_change_this` names the
+# different data that would be required instead.
+# ---------------------------------------------------------------------------
+
+excluded_latent_constructs:
+
+  - key: learner_cognitive_load
+    display_name: "Learner cognitive load"
+    why_excluded: >-
+      A property of the learner, not the artifact. Observable design RISKS
+      (redundancy, split attention, unintegrated references, missing signaling)
+      are codable and are covered inside the example-based constructs; the load
+      itself is not.
+    evidence: "Load is measured by learner self-report, secondary task, or physiological measures; none is present in an artifact."
+    what_would_change_this: "Learner-side effort ratings collected per item; then it becomes learner_enactment, not enacted_output."
+
+  - key: learner_motivation_interest_goals
+    display_name: "Learner motivation, interest, or goal orientation"
+    why_excluded: "Requires modeling the learner's internal state from text."
+    evidence: "Annotation studies in this literature report Krippendorff alpha of 0.03, 0.02, and 0.07 for learner-internal-state codes, replicated across two model conditions. Below chance."
+    what_would_change_this: "Direct learner self-report instruments; never an inference from a tutor turn."
+
+  - key: learner_understanding_or_mastery
+    display_name: "Learner understanding or mastery"
+    why_excluded: "A latent trait estimated from many scored responses, not visible in one artifact."
+    evidence: "Mastery estimates require held-out predictive scoring (log loss, Brier) over an item sequence."
+    what_would_change_this: "An item-response sequence with scored outcomes; that is a learning_outcome measurement, not a label."
+
+  - key: correct_strategy_for_this_moment
+    display_name: "Which instructional strategy the tutor SHOULD have used"
+    why_excluded: "There is no recoverable ground truth for the counterfactual."
+    evidence: "Three tutors pick the same action in 18% of cases, and the tutor who made a move agrees with outside raters about what it was at kappa 0.34."
+    what_would_change_this: "A scenario design that PRESCRIBES the target action in advance; that is contingent_help_calibration, which is included on exactly those terms."
+
+  - key: tone_warmth_encouragement
+    display_name: "Tone, warmth, encouragement"
+    why_excluded: "Low agreement, and optimizing it optimizes praise."
+    evidence: "Krippendorff alpha 0.24-0.30 across annotation studies. Feedback directed at the self is the case most associated with reduced performance."
+    what_would_change_this: "Nothing. It is measurable as sentiment; it is just not a teaching-quality measure."
+
+  - key: holistic_teaching_quality
+    display_name: "Holistic teaching quality"
+    why_excluded: "The single worst-performing label this repository has measured."
+    evidence: "Two careful raters agreed exactly 39% of the time; two annotators correlated at r = 0.15. A probe reached 0.581 predicting it, which looked like a representation failure until the label noise was measured."
+    what_would_change_this: "Nothing. It is collected in the labeling protocol ONLY as a diagnostic covariate, never as a target."
+
+  - key: uptake_revoicing
+    display_name: "Uptake and revoicing"
+    why_excluded: "Low agreement and trivially gamed."
+    evidence: "Fleiss kappa 0.286 as the field's flagship discourse measure, and a single feature (learner-token overlap) predicts the human labels at r = 0.52, so a reward for it is a reward for parroting."
+    what_would_change_this: "A definition that excludes verbatim overlap and survives its own gate."
+
+  - key: student_could_be_misled
+    display_name: "Whether a learner could take away something wrong"
+    why_excluded: "Requires a model of the learner rather than a check against the text."
+    evidence: "Six model raters agreed with the human at kappa 0.18 over 40 units while agreeing with each other at 0.41. Rewriting the question moved their behavior substantially and their agreement with the human hardly at all, which is the signature of a question that cannot be transferred."
+    what_would_change_this: "Replaced by a reference-checkable form: does any claim contradict the supplied reference solution. That form is inside elaborated_feedback_specificity."
+
+  - key: desirable_difficulty
+    display_name: "Desirable difficulty"
+    why_excluded: "Definitionally requires both an immediate cost and a delayed benefit, so it cannot be observed in an artifact at all."
+    evidence: "Requires paired immediate and delayed measurements conditioned on prior knowledge. Frustration, obscurity, and missing prerequisites are not desirable difficulties."
+    what_would_change_this: "A within-learner design with immediate and delayed outcomes; that is a learning_outcome study."
+
+  - key: retention_and_transfer
+    display_name: "Retention and transfer"
+    why_excluded: "Level-4 outcomes. Nothing in a single artifact bears on them."
+    evidence: "Requires delayed independent assessment with predeclared content and context distance."
+    what_would_change_this: "A randomized learner study. This is the only thing that would license a learning claim from this project."
+
+  - key: realized_engagement
+    display_name: "Realized learner engagement"
+    why_excluded: "The atlas codes the activity REQUESTED, not the activity performed."
+    evidence: "An invitation is not uptake; this is the ICAP framework's own caution about its classroom application."
+    what_would_change_this: "Coding the learner's subsequent turn, which moves it to learner_enactment."
+
+# ---------------------------------------------------------------------------
+# Debunked controls.
+#
+# Included in the item pool ON PURPOSE, as items that a naive quality model
+# should NOT reward. If a labeler or an agent rates these highly, that is a
+# measurable defect in the instrument. Each is a specific negative control with
+# an expected label.
+# ---------------------------------------------------------------------------
+
+debunked_controls:
+
+  - key: learning_style_meshing
+    display_name: "Matching instruction to a learner's 'learning style'"
+    status: not_supported
+    expected_label: "presence 0 on every atlas construct; quality low"
+    why: >-
+      The meshing hypothesis requires a crossover interaction between style and
+      instructional modality. Studies using the required design do not find it.
+      The belief remains widespread among educators, which is why it must be in
+      the pool.
+    citations:
+      - ref: "Pashler, McDaniel, Rohrer & Bjork (2008), Psychological Science in the Public Interest"
+        doi: "10.1111/j.1539-6053.2009.01038.x"
+        claim: "Reviews the evidence standard required and finds it almost entirely unmet."
+      - ref: "Rogowsky, Calhoun & Tallal (2015), Journal of Educational Psychology"
+        doi: "10.1037/a0037478"
+        claim: "Direct test of matching instructional modality to assessed style; no crossover interaction."
+      - ref: "Kirschner (2017), Computers & Education"
+        doi: "10.1016/j.compedu.2016.12.006"
+        claim: "Argues the myth persists despite the absence of supporting evidence."
+
+  - key: generic_growth_mindset_language
+    display_name: "Generic growth-mindset language with no task content"
+    status: contested_near_zero
+    expected_label: "presence 0 on every atlas construct; flagged if a rater scores it as pedagogically strong"
+    why: >-
+      The highest-quality subset of intervention studies shows effects
+      indistinguishable from zero, and a competing meta-analysis using
+      heterogeneity-attuned methods reaches more favorable conclusions on the
+      same literature. The disagreement is live and methodological. Either way,
+      detached 'your brain is a muscle' phrasing attached to no task carries
+      none of whatever effect exists.
+    citations:
+      - ref: "Macnamara & Burgoyne (2023), Psychological Bulletin"
+        doi: "10.1037/bul0000352"
+        claim: "63 studies, N = 97,672; overall d = 0.05 [0.02, 0.09], nonsignificant after publication-bias correction. Highest-quality subset (6 studies) d = 0.02 [-0.06, 0.10]."
+      - ref: "Sisk, Burgoyne, Sun, Butler & Macnamara (2018), Psychological Science"
+        doi: "10.1177/0956797617739704"
+        claim: "Meta-analysis finding weak overall effects with benefits limited to specific at-risk subgroups."
+      - ref: "Yeager, Hanselman, Walton, Murray et al. (2019), Nature"
+        doi: "10.1038/s41586-019-1466-y"
+        claim: "Preregistered national experiment; small effects concentrated in lower-achieving students in supportive school norms."
+      - ref: "Burnette, Billingsley, Banks, Knouse et al. (2023), Psychological Bulletin"
+        doi: "10.1037/bul0000368"
+        claim: "Competing meta-analysis of the same literature, 53 independent samples. For targeted subsamples with high implementation fidelity, academic achievement d = 0.14 [0.06, 0.22], with a 95% prediction interval of -0.08 to 0.35. Cited so the disagreement is visible rather than resolved by selection: even the favorable synthesis predicts that a new intervention may do nothing."
+
+  - key: learning_pyramid_retention_percentages
+    display_name: "The 'learning pyramid' retention percentages"
+    status: fabricated
+    expected_label: "presence 0; treated as a factual error if asserted"
+    why: >-
+      The familiar figures (people remember 10% of what they read, 90% of what
+      they teach) trace to no primary study and the numbers are not empirical.
+      An artifact citing them is asserting a fabricated statistic, which is a
+      correctness failure independent of its pedagogy.
+    citations:
+      - ref: "Letrud & Hernes (2018), Cogent Education"
+        doi: "10.1080/2331186X.2018.1518638"
+        claim: "Traces the origins of the learning-pyramid figures and documents the absence of supporting research."
+
+  - key: unguided_discovery_learning
+    display_name: "Minimally guided discovery as a general method"
+    status: not_supported_as_general_method
+    expected_label: "presence 0 on problem_solving_before_instruction unless consolidating instruction follows"
+    why: >-
+      Unassisted discovery does not outperform explicit instruction; enhanced
+      discovery WITH guidance, feedback, or worked examples does. This control
+      exists specifically to separate problem_solving_before_instruction, which
+      requires consolidating instruction, from the unguided version that shares
+      its surface form.
+    citations:
+      - ref: "Kirschner, Sweller & Clark (2006), Educational Psychologist"
+        doi: "10.1207/s15326985ep4102_1"
+        claim: "Argues minimal guidance is ineffective and inconsistent with cognitive architecture."
+      - ref: "Alfieri, Brooks, Aldrich & Tenenbaum (2011), Journal of Educational Psychology"
+        doi: "10.1037/a0021017"
+        claim: "Meta-analysis: unassisted discovery does not benefit learners; enhanced discovery with guidance does."
+
+  - key: praise_and_warmth_as_quality
+    display_name: "Praise, warmth, and verbosity as stand-alone quality"
+    status: not_supported_and_plausibly_harmful
+    expected_label: "presence 0 on every atlas construct; used to detect instrument drift"
+    why: >-
+      Over a third of feedback interventions reduced performance, with
+      self-directed attention the identified mechanism. A reward that pays for
+      warmth converges on this control, so its rate over training is a drift alarm.
+    citations:
+      - ref: "Kluger & DeNisi (1996), Psychological Bulletin"
+        doi: "10.1037/0033-2909.119.2.254"
+        claim: "Over a third of feedback interventions decreased performance; feedback directed at the self is the harmful case."
+      - ref: "Hattie & Timperley (2007), Review of Educational Research"
+        doi: "10.3102/003465430298487"
+        claim: "Praise directed at the self is the least effective feedback level."
+
+  - key: fluency_and_felt_learning
+    display_name: "Learner-felt learning, fluency, and immediate correctness"
+    status: inverted_indicator
+    expected_label: "collected as quality only; never treated as evidence of learning"
+    why: >-
+      Learners in active-learning conditions learned more while REPORTING that
+      they learned less; feelings of learning track fluency, which the most
+      effective techniques deliberately reduce. Any metric built on immediate
+      ease is systematically anti-correlated with the target.
+    citations:
+      - ref: "Deslauriers, McCarty, Miller, Callaghan & Kestin (2019), PNAS"
+        doi: "10.1073/pnas.1821936116"
+        claim: "Students in active learning learned more but felt they learned less than in passive lectures."
+      - ref: "Soderstrom & Bjork (2015), Perspectives on Psychological Science"
+        doi: "10.1177/1745691615569000"
+        claim: "Learning and performance dissociate; conditions that speed acquisition often impair retention."
+      - ref: "Bjork, Dunlosky & Kornell (2013), Annual Review of Psychology"
+        doi: "10.1146/annurev-psych-113011-143823"
+        claim: "Fluency-driven illusions of competence in self-regulated study."
+
+# ---------------------------------------------------------------------------
+# Reporting requirements. Every artifact produced from this ontology carries
+# these, so that a downstream reader can tell what a number is evidence for.
+# ---------------------------------------------------------------------------
+
+required_reporting_fields:
+  - construct_version
+  - evidence_level
+  - unit_of_analysis
+  - required_context_present
+  - applicability_judgment
+  - label_source
+  - inter_rater_reliability
+  - intra_rater_retest_reliability
+  - says_only_false_positive_rate
+  - hard_negative_false_positive_rate
+  - natural_or_synthetic
+  - known_surface_confounds_measured
+  - reward_eligibility_status
+  - evidence_limit

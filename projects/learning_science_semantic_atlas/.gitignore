@@ -1,0 +1,9 @@
+data/
+results/
+logs/
+*.npz
+*.npy
+*.jsonl
+*.safetensors
+*.pt
+__pycache__/
