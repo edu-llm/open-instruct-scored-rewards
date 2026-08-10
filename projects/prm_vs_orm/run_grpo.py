@@ -56,16 +56,57 @@ def relabel_row(row: dict, rm_name: str) -> dict:
     }
 
 
+def _parse_prompt_blob(raw: bytes, path: str) -> list[dict]:
+    """Robustly parse a prompts corpus into a list of dict rows (mirrors ``gen_onpolicy``'s fix).
+
+    ``data_prep`` writes rows via ``json.dumps(..., ensure_ascii=False)``. That escapes ``\\n`` but
+    emits Unicode line separators (``\\u2028``/``\\u2029``/``\\x85``/``\\v``/``\\f``) *literally*
+    inside string values -- all valid JSON. ``str.splitlines()`` treats every one of those as a line
+    boundary, so the old ``read_text().splitlines()`` + strict ``json.loads`` split a row mid-string
+    and died with ``Unterminated string ... line 1 column 13`` (the exact crash that killed the ORM
+    GRPO arm, and earlier the first Stage-A run; ``gen_onpolicy._parse_prompt_blob`` carries the same
+    fix). Parse the whole blob with one streaming ``JSONDecoder(strict=False)``: ``strict=False``
+    admits literal control chars inside strings, and ``raw_decode`` finds object boundaries by JSON
+    structure rather than physical newlines, so an embedded separator no longer splits a row. A
+    leading ``[`` is a single top-level array. Raise (never silently drop) if nothing parses, echoing
+    the on-disk head so one re-run diagnoses a genuine truncation via ``edullm logs``.
+    """
+    text = raw.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError(f"empty prompts corpus at {path} ({len(raw)} bytes)")
+    dec = json.JSONDecoder(strict=False)
+    if stripped[0] == "[":
+        obj = dec.decode(stripped)
+        if isinstance(obj, list):
+            return [r for r in obj if isinstance(r, dict)]
+    rows: list[dict] = []
+    idx, n = 0, len(stripped)
+    while idx < n:
+        while idx < n and stripped[idx].isspace():
+            idx += 1
+        if idx >= n:
+            break
+        obj, end = dec.raw_decode(stripped, idx)
+        if isinstance(obj, dict):
+            rows.append(obj)
+        idx = end
+    if not rows:
+        raise ValueError(
+            f"could not parse any prompt rows from {path}: {len(raw)} bytes, head={text[:200]!r}"
+        )
+    return rows
+
+
 def relabel_file(in_paths: list[str], out_path: str, rm_name: str) -> int:
     """Read each prompt jsonl, relabel every row, write one combined jsonl. Returns row count."""
     n = 0
     with open(out_path, "w") as w:
         for p in in_paths:
-            for line in Path(p).read_text().splitlines():
-                line = line.strip()
-                if not line:
+            for row in _parse_prompt_blob(Path(p).read_bytes(), p):
+                if not (isinstance(row.get("problem"), str) and row["problem"].strip()):
                     continue
-                w.write(json.dumps(relabel_row(json.loads(line), rm_name)) + "\n")
+                w.write(json.dumps(relabel_row(row, rm_name)) + "\n")
                 n += 1
     return n
 
@@ -214,7 +255,39 @@ def _selftest() -> None:
     assert cmd[cmd.index("--ground_truths_key") + 1] == "ground_truth"
     assert cmd[cmd.index("--dataset_mixer_list") + 1 : cmd.index("--dataset_mixer_list") + 3] == ["/tmp/p.jsonl", "100"]
     assert "--with_tracking" in cmd
-    print("RUN_GRPO SELFTEST OK: row relabel + grpo command builder verified")
+
+    # prompt-blob parsing must survive what killed the ORM GRPO arm: a Unicode/control line
+    # separator emitted literally inside a value by json.dumps(ensure_ascii=False).
+    # str.splitlines() breaks on all of U+2028/U+2029/U+0085/\v/\f; the streaming decoder
+    # must not. Cover NDJSON, an embedded LINE SEPARATOR (U+2028) and NEL (U+0085), a
+    # top-level JSON array, and a truncated head.
+    nd = b'{"problem": "x", "answer": "1"}\n{"problem": "y", "answer": "2"}\n'
+    assert [r["problem"] for r in _parse_prompt_blob(nd, "t")] == ["x", "y"]
+    sep = (
+        '{"problem": "a\u2028b", "answer": "3"}\n'
+        '{"problem": "c\u0085d", "answer": "4"}\n'
+    ).encode()
+    assert [r["problem"] for r in _parse_prompt_blob(sep, "t")] == ["a\u2028b", "c\u0085d"]
+    arr = b'[{"problem": "p", "answer": "1"}, {"problem": "q", "answer": "2"}]'
+    assert [r["problem"] for r in _parse_prompt_blob(arr, "t")] == ["p", "q"]
+    try:
+        _parse_prompt_blob(b'{"problem": "', "t")  # truncated head -> must raise, not silently drop
+        raise AssertionError("expected truncated blob to raise")
+    except ValueError:
+        pass
+    # end-to-end: relabel_file over a blob with an embedded separator writes clean NDJSON out.
+    import tempfile  # noqa: PLC0415 -- test-only
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "in.jsonl"
+        src.write_bytes(sep)
+        out = Path(d) / "out.jsonl"
+        count = relabel_file([str(src)], str(out), "rm")
+        assert count == 2, count
+        out_lines = out.read_text().split("\n")
+        out_lines = [x for x in out_lines if x]
+        assert len(out_lines) == 2 and all(json.loads(x)["dataset"] == "rm" for x in out_lines)
+        assert json.loads(out_lines[0])["messages"][0]["content"] == "a\u2028b"
+    print("RUN_GRPO SELFTEST OK: row relabel + grpo command builder + robust prompt parse verified")
 
 
 def main() -> None:
