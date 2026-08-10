@@ -14,7 +14,7 @@ schema_version: 1
 workload_profile: open-instruct-scored-rewards-train
 suggested_compute: gpu-8xa100
 command: >-
-  bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN
+  bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN VLLM_ALLOW_INSECURE_SERIALIZATION=1
   python projects/prm_vs_orm/run_grpo.py
   --rm-type prm
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
