@@ -118,6 +118,7 @@ from open_instruct.rl_utils import Timer, masked_mean
 from open_instruct.scored_rewards.registry import load_plugins as load_reward_plugins
 from open_instruct.scored_rewards.reward_config import make_reward_config
 from open_instruct.spec_decode import reporting as spec_decode_reporting
+from open_instruct.spec_decode import watchdog as spec_decode_watchdog
 from open_instruct.utils import (
     ArgumentParserPlus,
     BeakerRuntimeConfig,
@@ -1501,6 +1502,9 @@ def create_model_and_optimizer(
         collect_spec_decode_stats=vllm_config.vllm_collect_spec_decode_stats,
     )
     logger.info("======== ✅ vLLM engines and actor_manager initialized =========")
+    # Engine construction is the longest single stretch before the first step; count it as
+    # progress so the stall budget applies to the training loop rather than to startup.
+    spec_decode_watchdog.touch("vllm engines initialized")
 
     kv_cache_max_concurrency = ray.get(vllm_engines[0].get_kv_cache_info.remote())
     ray.get(actor_manager.set_kv_cache_max_concurrency.remote(kv_cache_max_concurrency))
@@ -1757,6 +1761,10 @@ def one_training_step(
             vllm_engines, vllm_config.vllm_collect_spec_decode_stats, total_generation_time, step_time
         ),
     }
+    # A completed step is the definition of progress this run uses; the watchdog aborts when
+    # nothing has reached this line for a while. See spec_decode/watchdog.py.
+    spec_decode_watchdog.touch(f"training_step {training_step}")
+
     # Print only scalar metrics
     scalar_metrics = {k: v for k, v in metrics.items() if isinstance(v, float | int)}
     print_rich_single_line_metrics(scalar_metrics)
@@ -2401,6 +2409,9 @@ def main(
     load_reward_plugins(streaming_config.reward_plugins)
 
     tokenizer = make_tokenizer(tc, model_config)
+    # Armed before anything slow starts, so a hang during setup is bounded too -- attempts 4
+    # and 5 both stalled before the first step, where a step-based check would never fire.
+    spec_decode_watchdog.start()
     args = setup_runtime_variables(args, streaming_config, tools_config)
     validate_configs(streaming_config, vllm_config, tuple(args.num_learners_per_node), args.sequence_parallel_size)
 
