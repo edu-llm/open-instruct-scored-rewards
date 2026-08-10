@@ -1,0 +1,25 @@
+schema_version: 1
+# PRM-vs-ORM Stage 7 (PRM arm): GRPO on the 370M SFT policy, reward = the trained PRM.
+# Identical to .edullm/run.yaml (the ORM arm) except --rm-type prm and the --rm-uri trailing dir, so
+# both arms build from ONE image (submit this arm with `edullm submit --spec .edullm/run-prm.yaml`).
+# open_instruct/grpo_fast.py drives Ray+vLLM rollouts; group-normalized advantages; KL(beta) to the
+# frozen SFT reference. The reward is NOT the ground-truth checker but our RMVerifier (rm_verifier.py),
+# routed to because every prompt row carries dataset=="rm" (== PRM_VS_ORM_RM_NAME). run_grpo.py sets
+# PRM_VS_ORM_RM_{PATH,TYPE,NAME,MAXLEN,ADD_BOS}, downloads SFT+RM from S3, launches grpo_fast, uploads
+# the trained policy to $EDULLM_CHECKPOINT_DIR. One outer orchestrator fans out over 8 GPUs via Ray
+# (4 learners + 4 vLLM engines) -> EDULLM_LAUNCH_CHECK=waived. GRPO places its own final checkpoint
+# (final policy uploaded to the checkpoint dir; no mid-run S3 resume) -> EDULLM_CHECKPOINT_CHECK=waived.
+# dtype bfloat16 named in the command so the precision guard sees it; A100 has bf16. W&B on (mandate):
+# --no-tracking omitted so run_grpo appends --with_tracking; entity/project wired by the GPU role.
+workload_profile: open-instruct-scored-rewards-train
+suggested_compute: gpu-8xa100
+command: >-
+  bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN
+  python projects/prm_vs_orm/run_grpo.py
+  --rm-type prm
+  --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
+  --rm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/prm
+  --prompts-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_gsm8k.jsonl,s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_math.jsonl
+  --out "$EDULLM_CHECKPOINT_DIR"
+  --num-learners 4 --vllm-num-engines 4 --vllm-tp 1
+  --dtype bfloat16'

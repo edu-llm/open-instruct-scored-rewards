@@ -12,8 +12,9 @@ sanctioned plugin hook -- no edit to ``open_instruct``:
      **relabel** each ``{problem, answer, dataset}`` row into the RLVR shape open-instruct expects
      -- ``{"messages": [user], "ground_truth": answer, "dataset": "<rm-name>"}`` -- so
      ``apply_verifiable_reward`` routes every prompt to our RM (``VERIFIER_SOURCE_KEY == "dataset"``);
-  4. launch ``grpo_fast.py`` with ``--reward_plugins projects/prm_vs_orm/rm_verifier.py`` (imports and
-     registers ``RMVerifier`` before verifiers are built) and ``--chat_template_name tulu`` (the
+  4. launch ``grpo_fast.py`` with ``--reward_plugins projects.prm_vs_orm.rm_verifier`` (dotted module
+     path, imported under a real name so Ray workers can re-import it; registers ``RMVerifier`` before
+     verifiers are built) and ``--chat_template_name tulu`` (the
      template the RM was trained on -- its rendered prompt is byte-identical to ``rm_common``'s);
   5. upload the saved policy (``output_dir/run_name``) to ``$EDULLM_CHECKPOINT_DIR`` for Stage 8 eval.
 
@@ -35,7 +36,13 @@ import rm_common  # noqa: E402 -- overlay-local module (shared vLLM rope-config 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GRPO_ENTRY = "open_instruct/grpo_fast.py"
-REWARD_PLUGIN = "projects/prm_vs_orm/rm_verifier.py"
+# Dotted module path, NOT a file path. ``registry._import_one`` loads a ``*.py`` file under a
+# *synthetic* module name (``scored_rewards_plugin_rm_verifier``) that exists only in the driver's
+# ``sys.modules``; when grpo_fast pickles the built RMVerifier to the vLLM Ray actors, those workers
+# cannot ``import`` that synthetic name and die with ModuleNotFoundError at actor creation. A dotted,
+# normally-importable path makes ``RMVerifier.__module__`` a real name every process can re-import
+# (given REPO_ROOT on PYTHONPATH, set below) -- the registry's own documented form.
+REWARD_PLUGIN = "projects.prm_vs_orm.rm_verifier"
 
 
 # --------------------------------------------------------------------------------------------
@@ -351,6 +358,14 @@ def main() -> None:
     combined = "/tmp/grpo_prompts.jsonl"
     count = relabel_file(local_prompt_files, combined, args.rm_name)
     print(f"relabelled {count} prompts -> {combined} (dataset={args.rm_name})", flush=True)
+
+    # Put the repo root on PYTHONPATH so ``import projects.prm_vs_orm.rm_verifier`` resolves in every
+    # process: the grpo_fast driver (launched as ``python open_instruct/grpo_fast.py`` -> sys.path[0]
+    # is ``open_instruct/``, not the root) AND the vLLM Ray actors, which inherit this via grpo_fast's
+    # ``ray.init(runtime_env={"env_vars": os.environ ...})`` (PYTHONPATH is not in EXCLUDED_ENV_VARS).
+    # This is what lets a worker re-import the dotted reward plugin when it unpickles RMVerifier.
+    _pp = os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = str(REPO_ROOT) + (os.pathsep + _pp if _pp else "")
 
     # Point the reward bridge (rm_verifier, loaded via --reward_plugins) at the downloaded RM.
     os.environ["PRM_VS_ORM_RM_PATH"] = rm_dir
