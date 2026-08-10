@@ -1,27 +1,23 @@
 schema_version: 1
-# PRM-vs-ORM Stage C (on-policy re-gate): re-run the pre-registered best-of-N go/no-go gate on
-# GSM8K with the ON-POLICY RMs (Stage B run_019fe8bf), against the same SFT policy and the same eval
-# slice (N=16, 200 problems) used for the Stage-5 PRM800K gate, so the numbers are directly
-# comparable. bon_eval.py samples N solutions/problem from the SFT policy via vLLM, ranks by ORM
-# (last-token P(correct)), by PRM (product of per-step P(correct), neutral-as-positive), and by
-# majority vote, and prints BON GATE: GO/NO-GO with the per-method accuracy table + pass@N; a JSON
-# report lands in $EDULLM_CHECKPOINT_DIR. Gate rule (bon_eval.py): max(orm_bon, prm_bon) >
-# max(majority, greedy). Single L40S, bf16 in hardware -> no launch waiver; -train profile (reads
-# prior runs' checkpoints via the GPU job role, writes only its report). Same vLLM fixes as Stage A:
-# VLLM_USE_FLASHINFER_SAMPLER=0 selects the forward_native sampler (the image's broken cu13
-# flashinfer JIT crashes EngineCore at the sampler otherwise); TRITON_ATTN belt for attention.
-# bon_eval applies the olmo2 rope C3 fix to the SFT config internally after download.
-#
-# NOTE the DOUBLE SLASH in the RM prefixes (checkpoints//orm, checkpoints//prm): Stage B wrote each
-# RM to "$EDULLM_CHECKPOINT_DIR/{orm,prm}" and EDULLM_CHECKPOINT_DIR carries a trailing slash, so the
-# objects live under the literal key checkpoints//{orm,prm}/... . S3 keys are literal strings, so the
-# prefix here must reproduce that double slash exactly or download_prefix finds nothing.
+# PRM-vs-ORM Stage 7 (ORM arm): GRPO on the 370M SFT policy, reward = the trained ORM.
+# open_instruct/grpo_fast.py drives Ray+vLLM rollouts; group-normalized advantages; KL(beta) to the
+# frozen SFT reference. The reward is NOT the ground-truth checker but our RMVerifier (rm_verifier.py),
+# routed to because every prompt row carries dataset=="rm" (== PRM_VS_ORM_RM_NAME). run_grpo.py sets
+# PRM_VS_ORM_RM_{PATH,TYPE,NAME,MAXLEN,ADD_BOS}, downloads SFT+RM from S3, launches grpo_fast, uploads
+# the trained policy to $EDULLM_CHECKPOINT_DIR. One outer orchestrator fans out over 8 GPUs via Ray
+# (4 learners + 4 vLLM engines) -> EDULLM_LAUNCH_CHECK=waived. GRPO places its own final checkpoint
+# (final policy uploaded to the checkpoint dir; no mid-run S3 resume) -> EDULLM_CHECKPOINT_CHECK=waived.
+# dtype bfloat16 named in the command so the precision guard sees it; A100 has bf16. W&B on (mandate):
+# --no-tracking omitted so run_grpo appends --with_tracking; entity/project wired by the GPU role.
 workload_profile: open-instruct-scored-rewards-train
-suggested_compute: gpu-1xl40s
+suggested_compute: gpu-8xa100
 command: >-
-  bash -lc 'VLLM_LOGGING_LEVEL=WARNING VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN python projects/prm_vs_orm/bon_eval.py
+  bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN
+  python projects/prm_vs_orm/run_grpo.py
+  --rm-type orm
   --sft-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdfac-f2be-703f-af2b-aa525c23aa9e/checkpoints/
-  --orm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe8bf-284b-7022-83e5-73e3272b86de/checkpoints//orm/
-  --prm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe8bf-284b-7022-83e5-73e3272b86de/checkpoints//prm/
-  --eval-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/eval_gsm8k.jsonl
-  --out "$EDULLM_CHECKPOINT_DIR" --dataset gsm8k --n 16 --num-problems 200'
+  --rm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/orm
+  --prompts-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_gsm8k.jsonl,s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_math.jsonl
+  --out "$EDULLM_CHECKPOINT_DIR"
+  --num-learners 4 --vllm-num-engines 4 --vllm-tp 1
+  --dtype bfloat16'
