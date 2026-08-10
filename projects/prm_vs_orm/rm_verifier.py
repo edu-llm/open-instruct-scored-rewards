@@ -110,6 +110,25 @@ def split_steps(solution: str) -> list[str]:
     return [s for s in solution.split(rm_common.STEP_SEP) if s.strip()]
 
 
+def problem_from_raw_query(query: str | None) -> str:
+    """Recover the bare problem text from open-instruct's ``RAW_PROMPT_KEY`` rendering.
+
+    GRPO feeds the verifier ``query = example[RAW_PROMPT_KEY]``, and
+    ``dataset_transformation.rlvr_tokenize_v3`` builds that value as
+    ``"\\n".join(f"{msg['role']}: {msg['content']}" for msg in prompt)`` -- so our single
+    user-turn prompt arrives as ``"user: {problem}"``, NOT the bare ``{problem}``. The RM was
+    trained by ``rm_common.encode_exchange`` on the *bare* problem wrapped in the tulu template
+    (``<|user|>\\n{problem}\\n<|assistant|>\\n...``); passing the ``"user: "``-prefixed string
+    straight through would tokenize a second ``user:`` **inside** the user turn -- no crash, but
+    every reward scored off-distribution from what the RM learned. We never set a system prompt,
+    so the row is exactly one user turn: strip a single leading ``"user: "`` label (the problem
+    body, which may itself contain newlines, is preserved verbatim).
+    """
+    q = query or ""
+    prefix = "user: "
+    return q[len(prefix):] if q.startswith(prefix) else q
+
+
 class RMVerifier(VerifierFunction):
     """Score a rollout with a trained ORM/PRM reward model (see module docstring)."""
 
@@ -191,7 +210,7 @@ class RMVerifier(VerifierFunction):
         rollout_state: dict | None = None,
     ) -> VerificationResult:
         self._ensure_loaded()
-        problem = query or ""
+        problem = problem_from_raw_query(query)
         if self.rm_type == "orm":
             rows = self._pooled_logits([(problem, prediction)])
             score = orm_reward(rows[0][0])
@@ -226,6 +245,12 @@ def _selftest() -> None:
     # step splitting mirrors STEP_SEP join
     assert split_steps("a\n\nb\n\nc") == ["a", "b", "c"]
     assert split_steps("only one step") == ["only one step"]
+    # GRPO hands us RAW_PROMPT_KEY == "user: {problem}"; the RM must see the bare problem, and a
+    # multi-line problem body must survive verbatim (strip only the single leading label).
+    assert problem_from_raw_query("user: What is 2+2?") == "What is 2+2?"
+    assert problem_from_raw_query("user: line1\nline2") == "line1\nline2"
+    assert problem_from_raw_query("already bare") == "already bare"
+    assert problem_from_raw_query(None) == ""
     # PRM_CORRECT_CLASSES is (neu, pos)
     assert rm_common.PRM_CORRECT_CLASSES == (1, 2)
     print("RM_VERIFIER SELFTEST OK: sigmoid/softmax, ORM+PRM aggregation, step split verified")

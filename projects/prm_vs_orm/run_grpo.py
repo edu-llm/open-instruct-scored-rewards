@@ -137,6 +137,7 @@ def build_grpo_cmd(
     num_learners: int,
     vllm_num_engines: int,
     vllm_tp: int,
+    vllm_gpu_memory_utilization: float,
     with_tracking: bool,
 ) -> list[str]:
     """Assemble the ``python grpo_fast.py`` argv for one arm (single outer process; Ray fans out)."""
@@ -166,6 +167,7 @@ def build_grpo_cmd(
         "--num_learners_per_node", str(num_learners),
         "--vllm_num_engines", str(vllm_num_engines),
         "--vllm_tensor_parallel_size", str(vllm_tp),
+        "--vllm_gpu_memory_utilization", str(vllm_gpu_memory_utilization),
         "--deepspeed_stage", "2",
         "--gradient_checkpointing",
         "--load_ref_policy", "true",
@@ -253,7 +255,7 @@ def _selftest() -> None:
         rm_type="prm", response_length=512, max_prompt_len=512, pack_length=1024,
         num_unique_prompts_rollout=32, num_samples_per_prompt_rollout=8, total_episodes=1000,
         learning_rate=3e-7, beta=0.05, temperature=0.8, num_learners=4, vllm_num_engines=4,
-        vllm_tp=1, with_tracking=True,
+        vllm_tp=1, vllm_gpu_memory_utilization=0.3, with_tracking=True,
     )
     assert cmd[:2] == ["python", GRPO_ENTRY]
     assert cmd[cmd.index("--reward_plugins") + 1] == REWARD_PLUGIN
@@ -261,6 +263,8 @@ def _selftest() -> None:
     assert cmd[cmd.index("--apply_verifiable_reward") + 1] == "true"
     assert cmd[cmd.index("--ground_truths_key") + 1] == "ground_truth"
     assert cmd[cmd.index("--dataset_mixer_list") + 1 : cmd.index("--dataset_mixer_list") + 3] == ["/tmp/p.jsonl", "100"]
+    # the OOM guard: engines must be launched with a low KV-cache fraction, never grpo_fast's 0.9 default
+    assert cmd[cmd.index("--vllm_gpu_memory_utilization") + 1] == "0.3"
     assert "--with_tracking" in cmd
 
     # prompt-blob parsing must survive what killed the ORM GRPO arm: a Unicode/control line
@@ -317,6 +321,11 @@ def main() -> None:
     ap.add_argument("--num-learners", type=int, default=4)
     ap.add_argument("--vllm-num-engines", type=int, default=4)
     ap.add_argument("--vllm-tp", type=int, default=1)
+    ap.add_argument("--vllm-gpu-mem-util", type=float, default=0.3,
+                    help="vLLM KV-cache fraction PER ENGINE. grpo_fast's 0.9 default reserves ~72GiB "
+                         "on an 80GiB A100 and OOMs the moment Ray co-locates an engine with a learner "
+                         "on one card (the crash that killed the PRM arm). A 370M policy at 1024-token "
+                         "context needs <10GiB, so 0.3 (~24GiB) fits even co-located, with headroom.")
     ap.add_argument("--max-seq-length", type=int, default=1024, help="RM scoring max length (env for rm_verifier)")
     ap.add_argument("--no-tracking", action="store_true")
     ap.add_argument("--dtype", default="bfloat16", help="named so the precision guard can see it")
@@ -384,6 +393,7 @@ def main() -> None:
         num_samples_per_prompt_rollout=args.num_samples_per_prompt_rollout, total_episodes=args.total_episodes,
         learning_rate=args.learning_rate, beta=args.beta, temperature=args.temperature,
         num_learners=args.num_learners, vllm_num_engines=args.vllm_num_engines, vllm_tp=args.vllm_tp,
+        vllm_gpu_memory_utilization=args.vllm_gpu_mem_util,
         with_tracking=not args.no_tracking,
     )
     print("launching:", " ".join(cmd), flush=True)

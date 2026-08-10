@@ -19,5 +19,5 @@ command: >-
   --rm-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fe395-36d9-7071-95a5-88f8a77e5179/checkpoints/orm
   --prompts-uri s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_gsm8k.jsonl,s3://sbsandbox-intern-edullm-outputs/teams/input-core/runs/run_019fdd78-db6f-702c-a119-7faa90ea0a33/checkpoints/prompts_math.jsonl
   --out "$EDULLM_CHECKPOINT_DIR"
-  --num-learners 4 --vllm-num-engines 4 --vllm-tp 1
+  --num-learners 4 --vllm-num-engines 4 --vllm-tp 1 --vllm-gpu-mem-util 0.3
   --dtype bfloat16'
