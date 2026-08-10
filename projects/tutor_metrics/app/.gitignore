@@ -1,0 +1,12 @@
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+.env
+.env.local
+.vercel/
+
+# The ingest key maps salted turn ids back to model, style and scenario target.
+# It is the whole blinding guarantee. It never leaves the laptop.
+key.json
+data/key*.json

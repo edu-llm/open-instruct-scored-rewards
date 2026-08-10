@@ -1,0 +1,436 @@
+{
+  "schema": "tutor-metrics/metric-seed-v1",
+  "source": "open-instruct/projects/tutor_metrics/metrics.py",
+  "sourceFileSha": "8b155f5933102bec0cb5f313c76c55b163ea0e37c05b3fd353d5a253c9d42ce8",
+  "metrics": [
+    {
+      "key": "assistance_level",
+      "group": "C",
+      "question": "Which single rung does this turn occupy?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "Invites the student to continue with no new content. 'Go on', 'what next?', 'and so?'",
+          "name": "pump"
+        },
+        {
+          "value": 2,
+          "label": "Points at where to look or what to consider, without naming the operation to perform.",
+          "name": "hint"
+        },
+        {
+          "value": 3,
+          "label": "Names the specific thing to do or account for, but leaves the student to do it.",
+          "name": "prompt"
+        },
+        {
+          "value": 4,
+          "label": "Carries out one step of the solution for the student, and shows the working.",
+          "name": "tell_step"
+        },
+        {
+          "value": 5,
+          "label": "States the final answer, or narrows the options until only one remains.",
+          "name": "tell_answer"
+        }
+      ],
+      "guidance": "Graesser's ladder, ordered from least to most tutor control. The ORDER is load-bearing: the reward gives partial credit for an adjacent rung, so a wrong order silently changes the metric.\nAnswer the rung the turn OCCUPIES, not the rung it should have occupied. Three tutors pick the same next action in 18% of cases, so that second question has no recoverable answer.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 5,
+      "requiresSpan": true,
+      "spanFromValue": null,
+      "needsReference": false,
+      "needsDialogue": true,
+      "allowNa": false,
+      "sourceSha": "e476f5f1f4332bde4ffb044a094643744582b1623f771d75a18d8ea291b5af26"
+    },
+    {
+      "key": "diagnoses_the_error",
+      "group": "A",
+      "question": "Does the turn say what is WRONG with the student's step, rather than only that something is wrong?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'That's not quite right, try again.' A verdict with no account of what went wrong."
+        },
+        {
+          "value": 2,
+          "label": "'You subtracted 3 from both sides, but the 3 is multiplied, not added.' Names the error."
+        }
+      ],
+      "guidance": "Ignore this surface cue: the word 'because' appearing anywhere.\nAtlas construct: elaborated_feedback_specificity.\nEligibility: eligible_with_guard. Expected length coupling: +.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "31204fa88d380a2637d3d5efa5039d8bc3314629325fc239404d602fb4b73210"
+    },
+    {
+      "key": "applies_principle_here",
+      "group": "A",
+      "question": "Does the turn name the relevant rule or relation AND say how it applies to this problem?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Remember conservation of momentum.' Names the rule and leaves it unattached to the problem."
+        },
+        {
+          "value": 2,
+          "label": "'Momentum is conserved in a collision, so the two masses after must sum to the 5 kg before.'"
+        }
+      ],
+      "guidance": "Ignore this surface cue: technical vocabulary density.\nAtlas construct: elaborated_feedback_specificity.\nEligibility: eligible_with_guard. Expected length coupling: +.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "30f73c1134beeeccb063616f89a386217d9759a4ce1b3489c469653206c817c0"
+    },
+    {
+      "key": "models_one_step",
+      "group": "A",
+      "question": "Does the turn carry out one step of the solution in full, showing the working?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Then you divide by 4 and you get the answer.' Describes a step without performing it."
+        },
+        {
+          "value": 2,
+          "label": "'Dividing both sides by 4: 4x/4 = 12/4, so x = 3.' One step, worked."
+        }
+      ],
+      "guidance": "Ignore this surface cue: presence of an equals sign.\nAtlas construct: worked_example_provision.\nEligibility: eligible_with_guard. Expected length coupling: +.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "a6fd521235a9407692d3a6b8b39aad6297ba8f40ae4e26bdb038235345bc90a7"
+    },
+    {
+      "key": "offers_parallel_case",
+      "group": "A",
+      "question": "Does the turn give a second, simpler or contrasting case AND indicate what to compare?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'This is like the last problem.' Asserts an analogy without giving the case or the mapping."
+        },
+        {
+          "value": 2,
+          "label": "'If it were 2x = 6 you would divide by 2. What is different about 2x + 1 = 6?'"
+        }
+      ],
+      "guidance": "Ignore this surface cue: the words 'like' or 'imagine'.\nAtlas construct: analogical_case_comparison.\nEligibility: eligible_with_guard. Expected length coupling: +.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "7f1e603bdc58de3b8b4c23ffda5aa58751c035177a8b14be238c586a8994f10b"
+    },
+    {
+      "key": "names_the_target",
+      "group": "A",
+      "question": "Does the turn say what the student is trying to establish RIGHT NOW - the sub-goal, not the action?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Now do the next bit.' Names an action with no goal attached."
+        },
+        {
+          "value": 2,
+          "label": "'We are trying to get x on its own on one side. That is the goal of this step.'"
+        }
+      ],
+      "guidance": "Ignore this surface cue: the phrase 'we want'.\nAtlas construct: subgoal_labeled_structure.\nEligibility: eligible_with_guard. Expected length coupling: +.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "737cc85c44faee2de940f99aa7389cac58e06bb23168ec8c4b639316e0d5775a"
+    },
+    {
+      "key": "asks_recall_of_established",
+      "group": "A",
+      "question": "Does the turn ask the student to state from memory something the dialogue already established?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Remember, we balance the oxygens first.' Supplies the answer inside the same turn."
+        },
+        {
+          "value": 2,
+          "label": "'Without scrolling up - what was the rule we used for the first one?'"
+        }
+      ],
+      "guidance": "Ignore this surface cue: the word 'remember'.\nAtlas construct: retrieval_practice_opportunity.\nEligibility: eligible_with_guard. Expected length coupling: 0.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": true,
+      "allowNa": false,
+      "sourceSha": "40f4583107d5fe8492fa625432392e6269c9a7f6e4663952ce9c1143a8dbc173"
+    },
+    {
+      "key": "locates_student_object",
+      "group": "B",
+      "question": "Does the turn point at a specific number, step, operation or word in what the student wrote?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Check your algebra.' Could follow any wrong answer to any problem."
+        },
+        {
+          "value": 2,
+          "label": "'Your second line says 2x = 10.' Quotes the student's own object."
+        }
+      ],
+      "guidance": "Ignore this surface cue: quotation marks.\nEligibility: eligible_with_guard. Expected length coupling: 0.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "23f36cbd39470b9d3f8e0e40af4b87f6737cc0300bcbb7efa3ae890ca1c2c09b"
+    },
+    {
+      "key": "verdict_with_referent",
+      "group": "B",
+      "question": "Does the turn say whether a NAMED step of the student's is right or wrong?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Great work!' Approval with nothing named, and nothing verified."
+        },
+        {
+          "value": 2,
+          "label": "'Your first line is right; the sign in the second one is not.'"
+        }
+      ],
+      "guidance": "Ignore this surface cue: exclamation marks.\nEligibility: eligible_with_guard. Expected length coupling: +.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "fab289008216580d66a50b9fbe5d34a766d67d49d5ef635a8fa11e7a5afdb717"
+    },
+    {
+      "key": "demand_is_specific",
+      "group": "B",
+      "question": "If the turn asks the student to do something, does it name a particular quantity, step or claim?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Why?' or 'Can you explain?' The student must work out what is being asked."
+        },
+        {
+          "value": 2,
+          "label": "'What does the 3 represent in your equation?' Names the object of the demand."
+        }
+      ],
+      "guidance": "Ignore this surface cue: question marks.\nEligibility: eligible_with_guard. Expected length coupling: 0.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "d02d27e9918e1dafde57559d23f433b68eb366801be77c00ef8827f2d1e4cc07"
+    },
+    {
+      "key": "reference_conflict",
+      "group": "guard",
+      "question": "Does anything the turn asserts conflict with the reference solution shown to you?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "Turn asserts nothing the reference can check. Not a conflict - leave unmarked."
+        },
+        {
+          "value": 2,
+          "label": "Turn says the answer is 7; the reference says 5. Conflict."
+        }
+      ],
+      "guidance": "Ignore this surface cue: length, strongly - more words means more checkable claims.\nEligibility: eligible_with_guard. Expected length coupling: -.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": true,
+      "needsDialogue": false,
+      "allowNa": true,
+      "sourceSha": "79087c937947ca6ce510de435384517fb751ed48bf261a563125f4b70079e5ef"
+    },
+    {
+      "key": "dialogue_conflict",
+      "group": "guard",
+      "question": "Does the turn contradict or ignore something already settled earlier in the dialogue?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "Repeats a point for emphasis without contradicting it."
+        },
+        {
+          "value": 2,
+          "label": "Re-asks a question the student already answered correctly two turns ago."
+        }
+      ],
+      "guidance": "Ignore this surface cue: dialogue position - later turns have more to contradict.\nEligibility: eligible_with_guard. Expected length coupling: -.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": true,
+      "allowNa": true,
+      "sourceSha": "9bdf8ad087e3041c3d759a17d88e8ffd5add5f0822d8ab59c3ac155ddc580b3e"
+    },
+    {
+      "key": "not_single_focus",
+      "group": "guard",
+      "question": "Is the student being asked to attend to more than one thing?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "One correction stated in two sentences. Still one thing."
+        },
+        {
+          "value": 2,
+          "label": "Corrects the sign error, explains the rule, and asks about units. Three things."
+        }
+      ],
+      "guidance": "Ignore this surface cue: sentence count.\nEligibility: eligible_with_guard. Expected length coupling: -.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "deeb7c4d07b8a5a553a84d22120ebca8d10deb88f1cbbb843464d8a629109da7"
+    },
+    {
+      "key": "empty_praise",
+      "group": "guard",
+      "question": "Does the turn praise the student or their ability without naming anything specific they did?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'Good - factoring first was the right call.' Praise with a referent. Not empty."
+        },
+        {
+          "value": 2,
+          "label": "'Great job, you're really good at this!' Praises the person, names nothing."
+        }
+      ],
+      "guidance": "Ignore this surface cue: second-person address.\nEligibility: eligible_with_guard. Expected length coupling: -.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": true,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "2f66cb2bd882d7910963a1f17a2c6fa26f7d79cd71c5e823c08cccb79387b342"
+    },
+    {
+      "key": "answer_withheld",
+      "group": "covariate",
+      "question": "Does the turn stop short of stating the final answer?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "'So x = 5.' Stated."
+        },
+        {
+          "value": 2,
+          "label": "Asks a question and stops. Answer not stated."
+        }
+      ],
+      "guidance": "Ignore this surface cue: turn length, negatively.\nAtlas construct: answer_withholding_level.\nEligibility: not_eligible_degenerate. Expected length coupling: -.",
+      "scale": "ordinal",
+      "lo": 1,
+      "hi": 2,
+      "requiresSpan": false,
+      "spanFromValue": 2,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "1806f051b59a1f3f39ec808fae8a861ef46d37200630d0c0cac61128cb7d2c5c"
+    },
+    {
+      "key": "icap_class",
+      "group": "covariate",
+      "question": "Which ICAP class does the requested activity fall in: passive, active, constructive, interactive?",
+      "anchors": [
+        {
+          "value": 1,
+          "label": "passive",
+          "name": "passive"
+        },
+        {
+          "value": 2,
+          "label": "active",
+          "name": "active"
+        },
+        {
+          "value": 3,
+          "label": "constructive",
+          "name": "constructive"
+        },
+        {
+          "value": 4,
+          "label": "interactive",
+          "name": "interactive"
+        }
+      ],
+      "guidance": "Report as four counts per arm. Never average, never regress on it.\nTreating it as an interval scale, which is what a reward would silently do.\nIgnore this surface cue: imperative mood.\nAtlas construct: icap_engagement_class.\nEligibility: not_eligible_unreliable. Expected length coupling: 0.",
+      "scale": "categorical",
+      "lo": 1,
+      "hi": 4,
+      "requiresSpan": false,
+      "spanFromValue": null,
+      "needsReference": false,
+      "needsDialogue": false,
+      "allowNa": false,
+      "sourceSha": "a752d38a85b08172b51fcecd1f91a03bf5aa1985d9b57afc92d8bcfa81210f9a"
+    }
+  ]
+}

@@ -1,0 +1,930 @@
+/* Raters do hundreds of these in a row. Fatigue is the mechanism by which agreement decays, so
+   type, contrast and the absence of layout shift are correctness requirements here, not polish.
+
+   Contrast, measured against the surface the text actually sits on:
+     dark   ink #e9ecf3 on panel #171b24 = 14.7:1   dim #a0a9ba on panel = 7.4:1
+            faint #7b8598 on panel = 4.7:1
+     light  ink #16181d on panel #ffffff = 17.4:1   dim #565e70 on panel = 6.5:1 */
+
+:root {
+  --bg: #10131a;
+  --panel: #171b24;
+  --raised: #1c2230;
+  --line: #262c38;
+  --line-strong: #333b4b;
+  --ink: #e9ecf3;
+  --dim: #a0a9ba;
+  --faint: #7b8598;
+  --accent: #6ea8fe;
+  --accent-soft: rgba(110, 168, 254, 0.14);
+  --accent-ink: #0a1020;
+  --good: #59e08c;
+  --good-soft: rgba(89, 224, 140, 0.15);
+  --warn: #fbbf24;
+  --bad: #fb8080;
+  --bad-soft: rgba(251, 128, 128, 0.14);
+  --kbd-bg: #232a38;
+  --kbd-line: #3a4356;
+
+  --turn-size: 18px;
+  --turn-leading: 1.65;
+  /* Floors, so the tutor turn sits at the same y on every item and muscle memory works. Sized to
+     the common case rather than the 90th percentile: a void that large is its own distraction. */
+  --turn-min-height: 6.2em;
+  --student-min-height: 3.4em;
+  --read-width: 72ch;
+  --answer-width: 420px;
+  --radius: 10px;
+}
+
+[data-theme='light'] {
+  /* The page is a shade below the panels so a card reads as a card. Body text sits on the panel,
+     so this does not touch any measured contrast ratio. */
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --raised: #f4f6fa;
+  --line: #dfe3ea;
+  --line-strong: #c3cad6;
+  --ink: #16181d;
+  --dim: #565e70;
+  --faint: #6b7488;
+  --accent: #1f5fd0;
+  --accent-soft: rgba(31, 95, 208, 0.1);
+  --accent-ink: #ffffff;
+  --good: #10794a;
+  --good-soft: rgba(16, 121, 74, 0.12);
+  --warn: #92600a;
+  --bad: #b62222;
+  --bad-soft: rgba(182, 34, 34, 0.1);
+  --kbd-bg: #eef1f6;
+  --kbd-line: #c3cad6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+button.quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--dim);
+}
+
+button.quiet:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+kbd {
+  font: 600 12.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--kbd-bg);
+  border: 1px solid var(--kbd-line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 4px 7px;
+  color: var(--ink);
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+}
+
+/* ─────────────────────────────────────────────────────────────── prose pages */
+
+.page {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 56px 24px 96px;
+}
+
+.page h1 {
+  font-size: 30px;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  margin: 0 0 8px;
+}
+
+.page h2 {
+  font-size: 19px;
+  margin: 34px 0 10px;
+}
+
+.page p {
+  color: var(--dim);
+  max-width: 66ch;
+}
+
+.page p.lead {
+  font-size: 17.5px;
+  color: var(--ink);
+}
+
+.page li {
+  color: var(--dim);
+  margin-bottom: 8px;
+  max-width: 66ch;
+}
+
+.page strong {
+  color: var(--ink);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+.card + .card {
+  margin-top: 14px;
+}
+
+.eyebrow {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 650;
+  color: var(--faint);
+  margin-bottom: 7px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.notice {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: var(--dim);
+  font-size: 14.5px;
+}
+
+.notice.bad {
+  border-left-color: var(--bad);
+}
+
+.notice.good {
+  border-left-color: var(--good);
+}
+
+/* ────────────────────────────────────────────────────────── labelling shell */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar .key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.bar {
+  width: 190px;
+  height: 7px;
+  border-radius: 4px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  flex: none;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+.meta {
+  color: var(--dim);
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--answer-width);
+  gap: 28px;
+  padding: 24px 24px 64px;
+  max-width: 1500px;
+  width: 100%;
+  margin: 0 auto;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+    padding-bottom: 380px;
+  }
+}
+
+/* ───────────────────────────────────────────────────────── reading column */
+
+.reading {
+  max-width: var(--read-width);
+}
+
+details.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  margin-bottom: 8px;
+}
+
+details.panel > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 14px;
+  font-size: 13.5px;
+  color: var(--dim);
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+}
+
+details.panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.panel > summary::before {
+  content: '▸';
+  color: var(--faint);
+  font-size: 11px;
+}
+
+details.panel[open] > summary::before {
+  content: '▾';
+}
+
+details.panel > summary .label {
+  font-weight: 620;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+details.panel > summary .peek {
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.panel-body {
+  padding: 4px 14px 14px;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--dim);
+  white-space: pre-wrap;
+}
+
+.panel-body .ink {
+  color: var(--ink);
+}
+
+.choices {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.choices li {
+  margin-bottom: 3px;
+}
+
+.choices li.correct {
+  color: var(--good);
+  font-weight: 620;
+}
+
+.block {
+  margin-top: 14px;
+}
+
+.block .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.student {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--dim);
+  white-space: pre-wrap;
+  border-left: 3px solid var(--line-strong);
+  padding: 2px 0 2px 14px;
+  min-height: var(--student-min-height);
+  max-width: 68ch;
+}
+
+.turn-wrap {
+  margin-top: 16px;
+}
+
+/* The one thing being judged. Bigger, brighter, ruled, and given a floor height so a short turn
+   does not pull the rest of the page upward between items. */
+.turn {
+  font-size: var(--turn-size);
+  line-height: var(--turn-leading);
+  color: var(--ink);
+  white-space: pre-wrap;
+  border-left: 3px solid var(--accent);
+  background: var(--panel);
+  border-radius: 0 10px 10px 0;
+  padding: 16px 20px 16px 18px;
+  min-height: var(--turn-min-height);
+  max-width: 64ch;
+  transition: opacity 90ms linear;
+}
+
+.turn.fading {
+  opacity: 0;
+}
+
+.sent {
+  border-radius: 4px;
+  padding: 1px 0;
+}
+
+.sent-n {
+  font-size: 0.62em;
+  vertical-align: super;
+  font-weight: 700;
+  color: var(--faint);
+  margin-right: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.picking .sent {
+  cursor: pointer;
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.picking .sent:hover,
+.picking .sent.hot {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.picking .sent-n {
+  color: var(--accent);
+}
+
+.chosen {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ──────────────────────────────────────────────────────── question column */
+
+.answer {
+  position: sticky;
+  top: 80px;
+}
+
+@media (max-width: 1100px) {
+  .answer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    background: var(--panel);
+    border-top: 1px solid var(--line-strong);
+    padding: 14px 18px 18px;
+    max-height: 60vh;
+    overflow: auto;
+    z-index: 15;
+  }
+}
+
+.question {
+  font-size: 17px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 14px;
+  letter-spacing: -0.005em;
+}
+
+.anchors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.anchor {
+  display: grid;
+  grid-template-columns: 30px 1fr 18px;
+  gap: 11px;
+  align-items: start;
+  text-align: left;
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 9px;
+  padding: 11px 12px;
+  min-height: 76px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.anchor:hover {
+  border-color: var(--line-strong);
+  border-left-color: var(--accent);
+}
+
+.anchor .tag {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  display: block;
+  margin-bottom: 3px;
+}
+
+.anchor .text {
+  color: var(--dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Selection is carried by background, a left rule AND a check glyph. Never by colour alone. */
+.anchor.sel {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+}
+
+.anchor.sel .tag,
+.anchor.sel .text {
+  color: var(--ink);
+}
+
+.anchor .tick {
+  color: var(--accent);
+  font-weight: 800;
+  visibility: hidden;
+  line-height: 1.6;
+}
+
+.anchor.sel .tick {
+  visibility: visible;
+}
+
+/* ───────────────────────────────────────────── the ladder: assistance_level */
+
+.ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+
+.ladder-axis {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 650;
+  color: var(--faint);
+  margin-bottom: 8px;
+}
+
+.ladder-axis .track {
+  flex: 1;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--line-strong), var(--accent));
+}
+
+.rung {
+  display: grid;
+  grid-template-columns: 30px 14px 1fr 18px;
+  gap: 10px;
+  align-items: start;
+  text-align: left;
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+  min-height: 72px;
+}
+
+.rung:hover {
+  border-color: var(--line-strong);
+}
+
+.rung .rail {
+  position: relative;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+}
+
+/* The rail runs behind the cards and through the 6px gaps between them, so five rows read as one
+   ordered ladder rather than five independent choices. The order is load-bearing: the reward
+   gives partial credit for an adjacent rung. */
+.rung .rail::before {
+  content: '';
+  position: absolute;
+  top: -16px;
+  bottom: -16px;
+  width: 2px;
+  background: var(--line-strong);
+}
+
+.rung:first-of-type .rail::before {
+  top: 11px;
+}
+
+.rung:last-of-type .rail::before {
+  bottom: 11px;
+}
+
+.rung .dot {
+  position: relative;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid var(--dim);
+  margin-top: 5px;
+}
+
+.rung .name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.rung .text {
+  color: var(--dim);
+}
+
+.rung.sel {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.rung.sel .dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.rung.sel .text {
+  color: var(--ink);
+}
+
+.rung .tick {
+  color: var(--accent);
+  font-weight: 800;
+  visibility: hidden;
+}
+
+.rung.sel .tick {
+  visibility: visible;
+}
+
+/* ─────────────────────────────────────────────────────────────── controls */
+
+.hints {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--faint);
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.hints kbd {
+  padding: 2px 5px;
+  min-width: 18px;
+  font-size: 11.5px;
+  border-bottom-width: 1px;
+}
+
+.subpanel {
+  margin-top: 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 9px;
+  padding: 12px 14px;
+}
+
+.subpanel h4 {
+  margin: 0 0 10px;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+/* The tinted panel raises the effective background, so the faintest grey no longer clears AA
+   against it. Secondary text inside a subpanel steps up one level. */
+.subpanel .hints,
+.subpanel .hints button.quiet {
+  color: var(--dim);
+}
+
+.pick-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+.pick:hover {
+  border-color: var(--accent);
+}
+
+.pick.sel {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+input[type='text'],
+textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 14px;
+}
+
+input[type='text']::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  color: var(--dim);
+  background: var(--raised);
+}
+
+.chip.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.chip.good {
+  border-color: var(--good);
+  color: var(--good);
+  background: var(--good-soft);
+}
+
+.chip.bad {
+  border-color: var(--bad);
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+
+/* ───────────────────────────────────────────────────────────────  overlays */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 13, 0.72);
+  backdrop-filter: blur(3px);
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 20px;
+  overflow: auto;
+}
+
+.sheet {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 26px 30px 30px;
+  max-width: 720px;
+  width: 100%;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.sheet h3 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.sheet h4 {
+  margin: 22px 0 8px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+
+.sheet p,
+.sheet li {
+  color: var(--dim);
+  font-size: 14.5px;
+}
+
+.banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 22px;
+  z-index: 70;
+  background: var(--panel);
+  border: 1px solid var(--bad);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 12px 18px;
+  color: var(--ink);
+  font-size: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  max-width: 640px;
+}
+
+.feedback {
+  margin-top: 12px;
+  border-radius: 9px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  background: var(--panel);
+}
+
+.feedback.right {
+  border-left-color: var(--good);
+}
+
+.feedback.wrong {
+  border-left-color: var(--bad);
+}
+
+.feedback .verdict {
+  font-weight: 700;
+  font-size: 14.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.feedback p {
+  margin: 0;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+/* ─────────────────────────────────────────────────────────────────  tables */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+th {
+  text-align: left;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line-strong);
+  padding: 7px 10px;
+  font-weight: 650;
+}
+
+td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+}
+
+td.ink {
+  color: var(--ink);
+}
+
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
