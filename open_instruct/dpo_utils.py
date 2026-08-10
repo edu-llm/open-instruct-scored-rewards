@@ -402,6 +402,20 @@ def _get_batch_stats(batch: dict) -> tuple[int, int, list[int], list[int]]:
     return batch_tokens, batch_size, chosen_lengths, rejected_lengths
 
 
+def _is_distributed() -> bool:
+    """True when a process group exists to collect over.
+
+    A single-process run never initializes one, and the collectives below raise
+    rather than no-op when it is missing.
+    """
+    return dist.is_available() and dist.is_initialized()
+
+
+def _barrier_if_distributed() -> None:
+    if _is_distributed():
+        dist.barrier()
+
+
 def build_reference_logprobs_cache(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
@@ -448,7 +462,7 @@ def build_reference_logprobs_cache(
                 f"Cannot write to cache directory {cache_path.parent}: {e}. "
                 f"Set REFERENCE_LOGPROBS_CACHE_PATH to a writable location."
             ) from e
-    dist.barrier()
+    _barrier_if_distributed()
 
     model.eval()
     chosen_tensor = torch.full((full_dataset_size,), float("-inf"), dtype=torch.float32, device=device)
@@ -488,8 +502,9 @@ def build_reference_logprobs_cache(
                 }
             )
 
-    dist.all_reduce(chosen_tensor, op=dist.ReduceOp.MAX)
-    dist.all_reduce(rejected_tensor, op=dist.ReduceOp.MAX)
+    if _is_distributed():
+        dist.all_reduce(chosen_tensor, op=dist.ReduceOp.MAX)
+        dist.all_reduce(rejected_tensor, op=dist.ReduceOp.MAX)
 
     missing_chosen = torch.where(chosen_tensor == float("-inf"))[0]
     missing_rejected = torch.where(rejected_tensor == float("-inf"))[0]
@@ -515,7 +530,7 @@ def build_reference_logprobs_cache(
         logger.info(f"Saving reference logprobs cache to {cache_path}")
         cache.to_disk(cache_path)
 
-    dist.barrier()
+    _barrier_if_distributed()
 
     return cache
 

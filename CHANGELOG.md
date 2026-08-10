@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 ### Removed
 
 ### Fixed
+- Skip the `dist.barrier()` and `dist.all_reduce()` calls in `build_reference_logprobs_cache` when no process group exists, so a single-process DPO run reaches training instead of dying with `Default process group has not been initialized` (https://github.com/edu-llm/open-instruct-scored-rewards/pull/12).
 - Ensure OLMo GPT-NeoX tokenizers with an existing distinct padding token still alias a missing BOS token to EOS, so `--add_bos` with older chat templates inserts the intended token instead of rendering an empty Jinja variable (https://github.com/edu-llm/open-instruct-scored-rewards/pull/11).
 - Rewrap the merged-weight assertion in `TestPeftWeightSync` so `ruff format` accepts it; the expression is unchanged, but as written it failed `make style-check` and so failed Code Quality on every pull request, including ones touching no Python (https://github.com/edu-llm/open-instruct-scored-rewards/pull/3).
 - Track the CUDA 12 image suffix in the merge-queue Beaker workflow and allow enough time for the larger image build and upload (https://github.com/allenai/open-instruct/pull/1783).

@@ -6,37 +6,85 @@
 # Workload profiles registered for open-instruct-scored-rewards: open-instruct-scored-rewards-check, open-instruct-scored-rewards-train.
 # edullm check prices this and lists every refusal, without dispatching anything.
 #
-# OLMo's default SFT -> DPO on OLMoE-1B-7B-0125, at smoke-test size.
+# OLMo's default SFT -> DPO on OLMoE-1B-7B-0125, at smoke-test size, as a FULL
+# fine-tune of every parameter. The earlier revision of this file trained LoRA
+# adapters; run_019fe311-ed20 covered that path. Full fine-tuning is the thing the
+# final model will actually use, so it is the thing the smoke has to prove.
 #
-# WHY LoRA AND NOT A FULL FINE-TUNE. OLMoE-1B-7B is 6.9B total parameters. A full
-# AdamW fine-tune needs roughly 110GB of device memory (bf16 weights and grads, plus
-# fp32 master weights and two moments). LoRA at rank 16 fits one accelerator.
+# WHY THIS NEEDS EIGHT CARDS AND ZeRO-3, WHICH IS THE WHOLE REASON THE SHAPE IS WHAT
+# IT IS. OLMoE-1B-7B is 6.9B stored parameters. A full AdamW fine-tune has to hold
+# bf16 weights and bf16 gradients (13.8GB each) plus fp32 master weights and two fp32
+# Adam moments (27.6GB each), which is about 110GB of optimizer-related state. The
+# cards here are A100 40GB, not 80GB: accelerators.yaml records gpu-8xa100 as eight
+# devices of 40,960 MiB, 327,680 MiB in total. So 110GB fits the node and fits no
+# single card, and the run only works if that state is sharded.
 #
-# WHY THE A100 SHAPE EVEN THOUGH ONE GPU IS ENOUGH. The Hub checkpoint is 27.7GB of
-# float32 safetensors, not the 13.8GB a bf16 checkpoint would occupy. Stage 2 then
-# writes a ~13.8GB merged model. gpu-1xl40s is a g6e.xlarge with the NVIDIA AMI's
-# default 30GiB root volume and no local NVMe; the model files alone exceed it once
-# the merged output exists, before counting the research image. gpu-8xa100 is the
-# only provisioned profile whose platform launch template supplies a 500GiB root
-# volume. This smoke uses one process; the larger shape is selected for storage,
-# not because the LoRA model needs eight GPUs.
+# ZeRO-3 shards parameters, gradients and optimizer state across all eight ranks, so
+# each holds roughly 110/8 = 13.8GB and has over 20GB left for activations, the
+# transient all-gather of whichever parameter is in flight, and the CUDA context.
+# ZeRO-2 was the other candidate and is what AI2's own archived OLMoE-0125 recipe
+# used, but it replicates the bf16 parameters on every rank: 13.8GB replicated plus
+# about 10.4GB of sharded optimizer state is roughly 26GB before activations, which
+# is a thin margin on a 40GB card. AI2 ran that recipe on 80GB hardware. ZeRO-3 is
+# the same result with the margin this hardware actually has.
 #
-# WHY rank 16 AND NOT THE DEFAULT 64. The published image resolves Transformers 5.14.1
-# and PEFT 0.20.0. PEFT maps the trainers' gate/up/down targets onto OLMoE's fused
-# gate_up_proj and down_proj expert parameters, doubling gate_up's rank. Across 16
-# layers, rank 16 therefore trains 188,743,680 parameters (2.7% of the 6.9B base);
-# rank 64 would train 754,974,720 (10.9%). Attention-only is the next option if needed.
+# WHY THE LoRA MERGE STAGE IS GONE. It existed only to fold adapters back into the
+# base weights so DPO could start from an ordinary dense checkpoint. A full
+# fine-tune writes one directly, so SFT's output directory is DPO's input and the
+# pipeline is two stages rather than three. That also removes a 13.8GB write and the
+# CPU-side merge, which is most of why this fits in a shorter runtime bound.
 #
-# WHY LoRA DROPOUT IS ZERO. PEFT's parameter-target ParamWrapper rejects every nonzero
-# lora_dropout. OLMoE expert targets use that wrapper in the published image, so the
-# otherwise conventional 0.05 value fails during get_peft_model(), before step zero.
+# WHY --fused_optimizer false. finetune.py defaults to torch.optim.AdamW(fused=True).
+# Fused AdamW as a client optimizer under ZeRO-3, where the parameters the optimizer
+# was constructed over are partitioned placeholders, is the least-travelled corner of
+# this combination. The kernel buys a few percent on a run whose cost is dominated by
+# a 27.7GB download, so it is switched off rather than debugged on a paid machine.
+#
+# WHY THE REFERENCE-LOGPROB CACHE PATH IS SET IN THE COMMAND. dpo_norm needs a
+# reference model, and dpo_tune_cache.py caches those logprobs before training under
+# dpo_utils.REFERENCE_LOGPROBS_CACHE_PATH, which defaults to
+# /weka/oe-adapt-default/allennlp/deletable_reference_logprobs_cache -- an AI2 Weka
+# mount that does not exist on this platform. build_reference_logprobs_cache mkdir -p
+# 's it and write-tests it, so as root it silently creates /weka on the container
+# filesystem and as anyone else it raises. Both outcomes are wrong; the env var
+# points it at the run's own scratch directory instead.
+#
+# WHY EACH LAUNCHER REDIRECTS TO A FILE AND REPLAYS IT ON FAILURE, WHICH IS THE ONLY
+# REASON A FAILURE HERE IS LEGIBLE. The platform exposes the last fifty lines the
+# container printed and nothing above them. torchrun's own epilogue for eight ranks is
+# about fifty lines of per-rank exit codes, so a crash reports which ranks died and
+# buries the traceback that says why. run_019fe413-2212 was lost exactly that way: it
+# ran three minutes, exited 1, and every one of the fifty lines it left was epilogue.
+#
+# The redirect is written inline rather than behind a shell function on purpose. A
+# function would read better and the platform would refuse it: the launch guard scans
+# the command text for a recognised launcher and the process count it starts, and
+# `stage sft accelerate launch ...` hides both behind the wrapper, which is refused as
+# process_per_device -- one process asked for on an eight-GPU profile.
+#
+# WHY --use_deepspeed IS NOT PASSED ALONGSIDE --config_file. The accelerate config
+# named below already declares distributed_type DEEPSPEED and zero_stage 3. Passing
+# the flag as well puts accelerate's own CLI defaults for the unset DeepSpeed options
+# in play against the file's values, which is a conflict this run does not need. The
+# archived AI2 recipe passes both, but against a much older accelerate than the 1.14
+# in this image.
 #
 # WHY bf16 IS WRITTEN OUT. The precision guard reads the text of this command and
-# cannot see a dtype set in code. L40S is Ada and has bfloat16 in hardware; a T4
+# cannot see a dtype set in code. A100 is Ampere and has bfloat16 in hardware; a T4
 # does not, and naming it here is what makes that refusal free instead of fatal.
 #
 # WHY THE CHECKPOINT CHECK IS WAIVED. This is a throwaway nobody resumes, and
 # EDULLM_CHECKPOINT_DIR is an s3:// URI that accelerate cannot save into directly.
+#
+# WHAT THE RUNTIME BOUND IS FOR, AND WHY IT IS AN HOUR RATHER THAN THREE. The bound
+# is a timeout on the attempt, not a reservation: the run is billed for the seconds it
+# uses, so a smaller number buys a tighter ceiling and an earlier kill for a hung job
+# rather than a discount. run_019fe311-ed20 is the measurement behind this one. Its
+# Batch attempt was submitted at 21:13:40 UTC and it had pulled the image, downloaded
+# the 27.7GB checkpoint, finished LoRA SFT, merged, and loaded the merged model into
+# DPO by 21:19:35 -- under six minutes. This spec drops the merge and adds two 13.8GB
+# dense saves and ZeRO-3 setup, so an hour is roughly a tenfold margin on what was
+# actually observed.
 #
 # WHAT IS DELIBERATELY LEFT AT ITS DEFAULT, AND IS THE FIRST THING TO REVISIT.
 # Both trainers carry --load_balancing_loss, documented in DPOConfig as being for
@@ -45,43 +93,50 @@
 # it and a smoke test should not confound a pipeline failure with a flag nobody has
 # run here before. For real post-training of an MoE it is the obvious next ablation.
 #
-# SFT's --max_train_samples field is dead code. The integer beside
-# --dataset_mixer_list is the actual sample count, so 64 is written there directly.
+# HOW THE SAMPLE COUNTS ARE SET, WHICH IS NOT THE SAME FLAG IN THE TWO TRAINERS.
+# finetune.py declares --max_train_samples and never reads it, so the integer beside
+# --dataset_mixer_list is SFT's only real bound. dpo_tune_cache.py does read
+# --max_train_samples. Eight ranks at one sequence each with two accumulation steps
+# is a global batch of 16, so 64 examples is four optimizer steps per stage -- enough
+# to exercise accumulation, the scheduler and the all-reduce more than once.
 #
 # SFT defaults push_to_hub and try_launch_beaker_eval_jobs to true. Both are disabled
-# explicitly: this platform injects no Hugging Face token, and a smoke test must not
-# publish an adapter or try to launch AI2 infrastructure as a side effect.
+# explicitly in both stages: this platform injects no Hugging Face token, and a smoke
+# test must not publish a model or try to launch AI2 infrastructure as a side effect.
 #
 # OLMoE's base tokenizer declares no BOS token even though the archived Tulu recipe
 # requires --add_bos and the released SFT tokenizer aliases BOS to <|endoftext|>.
 # Materializing that alias before launch pins the intended tokenization independently
-# of which published research image runs this command.
+# of which published research image runs this command. SFT saves that tokenizer
+# beside its weights, so DPO inherits it by loading from the SFT output directory.
 #
 # Flags verified against the parsed dataclass fields by .edullm/validate_smoke_flags.py,
 # which reads them with ast and needs no GPU. The archived DPO recipe has five stale
 # names: --dpo_loss_type, --dpo_beta, --num_train_epochs and --dataset_mixer_list are
 # now --loss_type, --beta, --num_epochs and --mixer_list, and dpo_tune_cache.py has
-# no --gradient_checkpointing flag.
+# no --gradient_checkpointing flag -- it enables it when --activation_memory_budget
+# is below 1.
 schema_version: 1
 workload_profile: open-instruct-scored-rewards-train
 suggested_compute: gpu-8xa100
 command: >-
   bash -lc 'set -x ; export EDULLM_CHECKPOINT_CHECK=waived ;
   export HF_HUB_ENABLE_HF_TRANSFER=1 ; OUT=/tmp/olmoe-smoke ; mkdir -p "$OUT" ;
-  echo "=== PREP OLMoE tokenizer BOS ===";
+  export REFERENCE_LOGPROBS_CACHE_PATH="$OUT/ref_cache" ;
+  echo "=== PREP OLMoE tokenizer BOS ===" ;
   python -c "from transformers import AutoTokenizer;
   t=AutoTokenizer.from_pretrained(\"allenai/OLMoE-1B-7B-0125\", use_fast=True);
-  t.bos_token=t.eos_token; t.save_pretrained(\"$OUT/tokenizer\")";
-  echo "=== STAGE 1/3 SFT (LoRA, bfloat16) ===";
-  accelerate launch --mixed_precision bf16 --num_processes 1
+  t.bos_token=t.eos_token; t.save_pretrained(\"$OUT/tokenizer\")" ;
+  echo "=== STAGE 1/2 SFT (full fine-tune, bfloat16, ZeRO-3, 8 ranks) ===" ;
+  accelerate launch --mixed_precision bf16 --num_processes 8
+  --config_file configs/ds_configs/deepspeed_zero3.yaml
   open_instruct/finetune.py
   --model_name_or_path allenai/OLMoE-1B-7B-0125
   --tokenizer_name_or_path "$OUT/tokenizer"
   --use_slow_tokenizer false
-  --use_lora --lora_rank 16 --lora_alpha 32 --lora_dropout 0
-  --gradient_checkpointing
+  --gradient_checkpointing --fused_optimizer false
   --max_seq_length 1024
-  --per_device_train_batch_size 1 --gradient_accumulation_steps 4
+  --per_device_train_batch_size 1 --gradient_accumulation_steps 2
   --learning_rate 2e-5 --lr_scheduler_type linear
   --warmup_ratio 0.03 --weight_decay 0.0 --num_train_epochs 1
   --dataset_mixer_list allenai/tulu-3-sft-personas-algebra 64
@@ -90,21 +145,18 @@ command: >-
   --output_dir "$OUT/sft"
   --push_to_hub false --try_launch_beaker_eval_jobs false
   --try_auto_save_to_beaker false
-  && echo "=== STAGE 2/3 merge LoRA into base ==="
-  && python open_instruct/merge_lora.py
-  --base_model_name_or_path allenai/OLMoE-1B-7B-0125
-  --lora_model_name_or_path "$OUT/sft"
-  --tokenizer_name_or_path "$OUT/sft"
-  --output_dir "$OUT/sft_merged" --save_tokenizer
-  && echo "=== STAGE 3/3 DPO (LoRA, bfloat16) ==="
-  && accelerate launch --mixed_precision bf16 --num_processes 1
+  > "$OUT/sft.log" 2>&1
+  || { echo "=== SFT FAILED, its own last 40 lines follow ===" ;
+  tail -40 "$OUT/sft.log" ; exit 1 ; } ;
+  echo "=== STAGE 2/2 DPO (full fine-tune, bfloat16, ZeRO-3, 8 ranks) ===" ;
+  accelerate launch --mixed_precision bf16 --num_processes 8
   open_instruct/dpo_tune_cache.py
-  --model_name_or_path "$OUT/sft_merged"
-  --tokenizer_name_or_path "$OUT/sft_merged"
+  --model_name_or_path "$OUT/sft"
+  --tokenizer_name_or_path "$OUT/sft"
   --use_slow_tokenizer false
-  --use_lora --lora_rank 16 --lora_alpha 32 --lora_dropout 0
-  --max_seq_length 1024 --max_train_samples 32
-  --per_device_train_batch_size 1 --gradient_accumulation_steps 4
+  --zero_stage 3 --activation_memory_budget 0.5
+  --max_seq_length 1024 --max_train_samples 64
+  --per_device_train_batch_size 1 --gradient_accumulation_steps 2
   --learning_rate 5e-7 --lr_scheduler_type linear
   --warmup_ratio 0.1 --weight_decay 0.0 --num_epochs 1
   --mixer_list allenai/tulu-3-wildchat-reused-on-policy-8b 100
@@ -114,4 +166,7 @@ command: >-
   --output_dir "$OUT/dpo"
   --push_to_hub false --try_launch_beaker_eval_jobs false
   --try_auto_save_to_beaker false
-  && echo "=== SMOKE TEST PASSED: SFT+DPO on OLMoE-1B-7B-0125 ==="'
+  > "$OUT/dpo.log" 2>&1
+  || { echo "=== DPO FAILED, its own last 40 lines follow ===" ;
+  tail -40 "$OUT/dpo.log" ; exit 1 ; } ;
+  echo "=== SMOKE TEST PASSED: full SFT+DPO on OLMoE-1B-7B-0125 ==="'

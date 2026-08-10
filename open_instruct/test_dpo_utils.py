@@ -2,6 +2,7 @@
 
 import logging
 import unittest
+from unittest import mock
 
 import torch
 from parameterized import parameterized
@@ -207,6 +208,27 @@ class TestComputeReferenceCacheHash(unittest.TestCase):
         hash2 = dpo_utils.compute_reference_cache_hash(args2, tc)
 
         self.assertNotEqual(hash1, hash2)
+
+
+class TestReferenceCacheCollectives(unittest.TestCase):
+    """A single-process run initializes no process group, and the collectives raise there."""
+
+    def test_not_distributed_without_a_process_group(self):
+        self.assertFalse(dpo_utils._is_distributed())
+
+    def test_barrier_is_skipped_without_a_process_group(self):
+        with mock.patch.object(dpo_utils.dist, "barrier") as barrier:
+            dpo_utils._barrier_if_distributed()
+        barrier.assert_not_called()
+
+    def test_barrier_is_taken_when_a_process_group_exists(self):
+        with (
+            mock.patch.object(dpo_utils.dist, "is_available", return_value=True),
+            mock.patch.object(dpo_utils.dist, "is_initialized", return_value=True),
+            mock.patch.object(dpo_utils.dist, "barrier") as barrier,
+        ):
+            dpo_utils._barrier_if_distributed()
+        barrier.assert_called_once()
 
 
 if __name__ == "__main__":
