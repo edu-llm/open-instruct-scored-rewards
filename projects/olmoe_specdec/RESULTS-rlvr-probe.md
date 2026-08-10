@@ -51,6 +51,65 @@ Remaining un-derisked at attempt 2: the memory sizing. 6 learners under ZeRO-3 p
 policy on 40 GB cards is reasoned, not measured, and OLMoE's absent GQA makes KV heavier than
 parameter counts suggest. An OOM would land after the model load, a few minutes in.
 
+## Attempt 6 — `run_019fe978-dadb-7074-b916-7a0bc420251a` — SUCCEEDED
+
+`SUCCEEDED`, exit 0, 04:36:38 → 04:58:35 UTC (22 minutes) after ~5 hours queued on p4d scarcity.
+A complete 20-step probe. No `KeyError`, no OOM at `--vllm_gpu_memory_utilization 0.72`, no stall.
+
+### The measurement
+
+| step | R_gen (`generation_share`) | mean concurrency | f (`favourable_iteration_fraction`) |
+|---|---|---|---|
+| 1 | 0.23 | 51.7 | 0.67 |
+| 2 | 0.91 | 45.4 | 0.73 |
+| 3 | 0.60 | 56.4 | 0.65 |
+| 4 | 0.31 | 45.5 | 0.71 |
+| **mean** | **0.51** | **49.8** | **0.69** |
+
+`num_drafts: 0` throughout, as expected: this is the autoregressive arm and no draft exists yet.
+
+### Verdict: GO. Train the EAGLE-3 draft.
+
+`f = 0.69`, against a go/no-go threshold of 0.40. At α = 3:
+
+    S_gen  ≈ 0.69 · (3/1.45) + 0.31 · 1.0  =  1.74×  on the generation stage
+    S_step ≤ 1 / (0.51/1.74 + 0.49)        =  1.28×  end to end
+
+and because R_gen varies a lot step to step, the end-to-end figure ranges with it: **1.11× at
+R_gen 0.23, 1.34× at 0.60, 1.63× at 0.91.**
+
+For comparison, arXiv:2604.26779 reports 1.35–1.41× end-to-end at 8B. So this workload lands in
+the same band, which was not the expected outcome.
+
+### Why the earlier pessimism was wrong, and it is worth being precise about it
+
+The fixed-length sweep said speculation could not win: throughput saturated by batch 256 and
+break-even α became unreachable. That conclusion followed from forcing `min_tokens = max_tokens`,
+which holds all 768 sequences alive to the end and reports the maximally unfavourable concurrency
+**by construction**.
+
+A real RLVR-GSM step behaves nothing like that. **Mean concurrency is ~50, not 768** — answers are
+short, they stop on `</answer>` at staggered times, and the step drains almost immediately into the
+regime where verifying `k+1` tokens costs 1.40–1.48× one token rather than 3×. 69% of forward passes
+run at or below concurrency 64.
+
+So the sweep was a lower bound, exactly as recorded at the time, and the gap between bound and
+reality is the whole result. Had the decision been made on the sweep alone, this would have been
+abandoned as a null.
+
+The prediction logged before the run — `f = 0.7 → S_gen ≈ 1.75×, S_step ≈ 1.27× at R_gen 0.5` —
+matches the measurement to two decimal places. The model of the workload is sound.
+
+### Caveats that belong with the number
+
+- **R_gen is noisy** (0.23–0.91 across four steps) because generation overlaps training
+  asynchronously. Four steps is too few to pin its mean; more steps would tighten it, and the
+  end-to-end figure moves with it more than anything else does.
+- **α = 3 is borrowed, not measured.** It is the paper's in-domain EAGLE-3 range (2.7–3.3) and this
+  workload's α is unknown until a draft exists. At α = 2.7, S_gen falls to ~1.60×.
+- **f is a property of this configuration**: 4 learners, engine TP=4, `gpu_memory_utilization 0.72`,
+  48 prompts × 16 samples. Changing the learner/engine split changes it and needs re-measuring.
+
 ## Attempt 5 — `run_019fe75e-af1a-700f-8c91-458dc84bea3e`
 
 **The `KeyError` is gone.** This is the first attempt where the OLMoE override actually reached the
