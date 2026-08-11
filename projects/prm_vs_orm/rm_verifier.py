@@ -174,8 +174,11 @@ class RMVerifier(VerifierFunction):
         else:
             self._add_bos = tok.bos_token_id is not None
 
+        # transformers 5.x renamed ``torch_dtype`` -> ``dtype``; the old name warns now and is slated
+        # to be ignored, which would silently load the RM in fp32. Use ``dtype`` so the scorer stays
+        # bf16 (matching the policy/rollout precision this reward is compared against).
         model = AutoModelForSequenceClassification.from_pretrained(
-            self.rm_path, num_labels=num_labels, torch_dtype=torch.bfloat16
+            self.rm_path, num_labels=num_labels, dtype=torch.bfloat16
         )
         model.config.pad_token_id = tok.pad_token_id
         model.eval()
