@@ -242,17 +242,45 @@ $\mathrm{PRM\text{-}RL}$ vs. $\mathrm{ORM\text{-}RL}$, with SFT as the floor.
 (§5) found RM reranking below majority vote in both training regimes — a small, near-floor
 signal consistent with the policy being the bottleneck at 370M.
 
-**RL arms (pending).** Both GRPO arms share every hyperparameter and the SFT init; only
-$R$ differs.
+**RL arms (measured).** Both GRPO arms share every hyperparameter and the SFT init; only
+$R$ differs. Accuracy graded by open-instruct's `GSM8KVerifier`/`MathVerifier`; counts in
+parentheses (n=1319 GSM8K test, n=458 MATH test).
 
 | Model | GSM8K greedy | GSM8K maj@8 | MATH greedy | MATH maj@8 |
 |---|---|---|---|---|
-| SFT (baseline) | — | — | — | — |
-| ORM-RL | **[pending]** | **[pending]** | **[pending]** | **[pending]** |
-| PRM-RL | **[pending]** | **[pending]** | **[pending]** | **[pending]** |
+| SFT (baseline) | 1.36% (18) | 2.35% (31) | 3.28% (15) | 3.06% (14) |
+| ORM-RL | 0.99% (13) | 1.36% (18) | 2.62% (12) | 1.53% (7) |
+| PRM-RL | **1.97%** (26) | 1.74% (23) | **5.24%** (24) | 2.18% (10) |
 
-The primary read is the signed difference $\mathrm{acc}(\text{PRM-RL})-\mathrm{acc}(\text{ORM-RL})$
-on GSM8K greedy, with maj@8 and MATH as corroboration.
+Two findings, kept separate:
+
+1. **RL did not beat the SFT floor.** ORM-RL is *below* SFT on all four cells; PRM-RL
+   exceeds SFT on greedy but not maj@8, and no PRM-vs-SFT gap is significant ($p\ge0.14$).
+   This matches the best-of-$N$ gate's NO-GO: at 370M the *policy* is the ceiling, so the
+   reward choice cannot manufacture a capability that the base sampler lacks (pass@$N$ low).
+
+2. **PRM beat ORM — a consistent but borderline signal.** The difference
+   $\mathrm{acc}(\text{PRM-RL})-\mathrm{acc}(\text{ORM-RL})$ is positive on all four metrics, and
+   largest on greedy, same-signed in *both* datasets: GSM8K 1.97% vs 0.99% (26 vs 13 of 1319),
+   MATH 5.24% vs 2.62% (24 vs 12 of 458). The normal-approximation two-proportion test calls both
+   significant ($z{=}{+}2.10$, $p{=}0.036$; $z{=}{+}2.04$, $p{=}0.041$), but at these counts the
+   exact **Fisher** test is the honest one and puts both just over the line ($p{=}0.052$ GSM8K,
+   $p{=}0.060$ MATH). maj@8 agrees in sign only ($p\approx0.43$–$0.46$), and across the four cells
+   the effect would not survive a strict multiple-comparison correction. Because both arms are
+   scored on the *same* problems, the correct test is the **paired McNemar** test, which turns on
+   the discordant problems alone. The *net* advantage is fixed regardless of overlap (13 problems
+   on GSM8K, 12 on MATH), so McNemar's exact two-sided $p$ is bounded by its zero-overlap worst
+   case ($p{=}0.053$ GSM8K, $p{=}0.065$ MATH) and falls fast as the arms' correct-sets overlap
+   ($p{\approx}0.02$ at ~40% overlap, $p{<}0.001$ at full overlap). Since both arms share the SFT
+   init and co-solve the easy items, overlap is expected high and the paired test likely clears
+   $0.05$ — but the actual number needs the per-problem flags from the follow-up eval. So the
+   honest reading is a *real but fragile* PRM advantage, not noise (chance-level on these
+   free-form answers is ~0%, so neither arm is guessing) and not a slam-dunk. **[paired stats:
+   pending 2nd eval]**
+
+So the process reward produced a modestly but consistently better policy than the outcome
+reward, even though neither cleared the SFT floor — a comparison that holds *because* the two
+arms are otherwise identical, not despite both being near-floor.
 
 ---
 
