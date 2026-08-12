@@ -31,8 +31,10 @@ a wide spread would otherwise dominate the sum for no reason but its variance.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from open_instruct.scored_rewards import GroupScorer, Sample, ScoreResult, register
@@ -159,6 +161,11 @@ class PedagogyHead(GroupScorer):
         self._model: Any = None
         self._tokenizer: Any = None
         self._input_device: Any = None
+        # Scoring is synchronous and can spend minutes loading/running a sharded
+        # encoder. Keep it off the vLLM asyncio loop, but pin every CUDA call to
+        # one worker so concurrent completed groups cannot race the same model.
+        self._score_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pedagogy-reward")
+        self._score_thread_id: int | None = None
 
     def _default_dimensions(self) -> list[str]:
         return [dimension for dimension in SIGNS if dimension in self.meta["dimensions"]]
@@ -335,6 +342,18 @@ class PedagogyHead(GroupScorer):
         return max(0.0, (self.length_zero_hi - words) / span) if span else 0.0
 
     async def score_group(self, group: list[Sample]) -> list[ScoreResult]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._score_executor, self._run_score_group_sync, group)
+
+    def _run_score_group_sync(self, group: list[Sample]) -> list[ScoreResult]:
+        worker_thread = threading.get_ident()
+        if self._score_thread_id is None:
+            self._score_thread_id = worker_thread
+        elif self._score_thread_id != worker_thread:
+            raise RuntimeError("reward scorer changed CUDA worker thread")
+        return self._score_group_sync(group)
+
+    def _score_group_sync(self, group: list[Sample]) -> list[ScoreResult]:
         import numpy as np  # noqa: PLC0415
 
         contexts = [self.context(s) for s in group]

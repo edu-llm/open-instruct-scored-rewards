@@ -34,9 +34,13 @@ class TutorMetricsHead(PedagogyHead):
 
         item = sample.item
         transcript = parse_transcript(sample.env_info.get(TRANSCRIPT_KEY, "")) if sample.env_info else []
-        tutor_turns = [turn.get("text", "") for turn in transcript if turn.get("who") in ("policy", "tutor", "assistant")]
+        tutor_turns = [
+            turn.get("text", "") for turn in transcript if turn.get("who") in ("policy", "tutor", "assistant")
+        ]
         turn = tutor_turns[-1] if tutor_turns else sample.policy_text
-        student_turns = [turn.get("text", "") for turn in transcript if turn.get("who") in ("partner", "student", "user")]
+        student_turns = [
+            turn.get("text", "") for turn in transcript if turn.get("who") in ("partner", "student", "user")
+        ]
         student = student_turns[-1] if student_turns else item.get("student_before", "")
         question = item.get("question") or item.get("prompt") or sample.prompt
         problem = {"question": question, "choices": item.get("choices")}
@@ -50,7 +54,7 @@ class TutorMetricsHead(PedagogyHead):
             return tutor_messages_neutral(problem, student), turn
         raise ValueError(f"unsupported tutor-metrics prompt scheme {scheme!r}")
 
-    async def score_group(self, group: list[Sample]) -> list[ScoreResult]:
+    def _score_group_sync(self, group: list[Sample]) -> list[ScoreResult]:
         import numpy as np  # noqa: PLC0415
 
         contexts = [self.context(sample) for sample in group]
