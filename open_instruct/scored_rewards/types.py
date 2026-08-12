@@ -54,16 +54,23 @@ class Sample:
         structure to it (a question, its options, a rubric, a reference) travels
         as JSON. Anything that is not a JSON object comes back under ``answer``
         so a scorer can read one key either way.
+
+        RLVR tokenization wraps ground truths in a verifier-aligned list even
+        when the row uses only one verifier. Unwrap that transport container so
+        scorers see the original JSON object rather than ``{"answer": [json]}``.
         """
-        if isinstance(self.label, dict):
-            return self.label
-        if isinstance(self.label, str):
+        label = self.label
+        while isinstance(label, (list, tuple)) and len(label) == 1:
+            label = label[0]
+        if isinstance(label, dict):
+            return label
+        if isinstance(label, str):
             try:
-                parsed = json.loads(self.label)
+                parsed = json.loads(label)
             except (json.JSONDecodeError, ValueError):
-                return {"answer": self.label}
+                return {"answer": label}
             return parsed if isinstance(parsed, dict) else {"answer": parsed}
-        return {"answer": self.label}
+        return {"answer": label}
 
     @property
     def env_info(self) -> dict:

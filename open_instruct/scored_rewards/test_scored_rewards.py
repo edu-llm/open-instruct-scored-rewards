@@ -37,6 +37,11 @@ class TestSample(unittest.TestCase):
         sample = Sample(completion="hi", label=json.dumps(payload))
         self.assertEqual(sample.item, payload)
 
+    def test_single_verifier_transport_list_becomes_item(self):
+        payload = {"question": "why?", "target_level": "prompt"}
+        sample = Sample(completion="hi", label=[json.dumps(payload)])
+        self.assertEqual(sample.item, payload)
+
     def test_plain_label_lands_under_answer(self):
         self.assertEqual(Sample(completion="", label="copper wire").item, {"answer": "copper wire"})
         # a bare number is valid JSON, so it arrives parsed

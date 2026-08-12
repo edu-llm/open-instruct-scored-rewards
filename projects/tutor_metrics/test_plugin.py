@@ -68,6 +68,18 @@ def test_metric_heads_compose_into_moving_target_reward(tmp_path):
     assert result.score == 2.75
 
 
+def test_metric_heads_accept_single_verifier_ground_truth_list(tmp_path):
+    scorer = TutorMetricsHead(head=str(head_file(tmp_path)))
+    scorer.states = lambda contexts: {("eot", 1): [np.zeros(2, dtype=np.float32) for _ in contexts]}  # type: ignore[method-assign]
+    wrapped = sample()
+    wrapped.label = [wrapped.label]
+
+    result = asyncio.run(scorer.score_group([wrapped]))[0]
+
+    assert result.info["target_level"] == "prompt"
+    assert result.score == 2.75
+
+
 def test_states_requests_tensor_chat_template_output(tmp_path):
     scorer = TutorMetricsHead(head=str(head_file(tmp_path)))
     return_dict_values = []
