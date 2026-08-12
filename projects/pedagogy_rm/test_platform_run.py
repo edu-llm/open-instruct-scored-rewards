@@ -90,6 +90,15 @@ def test_half_written_local_checkpoint_is_not_uploaded(tmp_path: Path) -> None:
     assert store.events == []
 
 
+def test_blank_latest_during_deepspeed_rewrite_is_deferred(tmp_path: Path) -> None:
+    local_checkpoint(tmp_path)
+    (tmp_path / "latest").write_text("")
+    store = MemoryStore()
+
+    assert upload_latest(store, tmp_path, previous="global_step0") == "global_step0"
+    assert store.events == []
+
+
 def test_complete_checkpoint_round_trips_through_remote_store(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()

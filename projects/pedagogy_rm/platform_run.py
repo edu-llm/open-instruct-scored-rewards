@@ -120,7 +120,17 @@ def upload_latest(store: S3Tree, checkpoint_dir: Path, previous: str | None) -> 
     latest_path = checkpoint_dir / "latest"
     if not latest_path.is_file():
         return previous
-    tag = _validate_tag(latest_path.read_text().strip())
+    try:
+        tag_text = latest_path.read_text().strip()
+    except FileNotFoundError:
+        return previous
+    # DeepSpeed rewrites `latest` with truncate-then-write rather than an
+    # atomic rename. A mirror poll can therefore observe an empty file for a
+    # moment while a healthy checkpoint is being committed.
+    if not tag_text:
+        print("checkpoint latest tag is being rewritten; deferring S3 upload", flush=True)
+        return previous
+    tag = _validate_tag(tag_text)
     source = checkpoint_dir / tag
     if not tag or not source.is_dir() or tag == previous:
         return previous
