@@ -2212,9 +2212,11 @@ def run_training(
                 (checkpoint_root / checkpoint_tag / CHECKPOINT_STATE_COMPLETE_MARKER).touch()
                 logger.info(f"Saved checkpoint state at step {training_step} to {args.checkpoint_state_dir}")
 
-        if training_step > resume_training_step:
-            logger.debug(f"[Main Thread] Triggered weight sync for step {training_step}")
-            weight_sync_trigger.notify(step=training_step)
+        # The initialization sync publishes resume_training_step - 1. Publish
+        # every completed optimizer step, including the first step after a
+        # fresh start or resume, so vLLM never skips one policy version.
+        logger.debug(f"[Main Thread] Triggered weight sync for step {training_step}")
+        weight_sync_trigger.notify(step=training_step)
 
         last_eval_collected = grpo_utils.maybe_evaluate(
             args,
