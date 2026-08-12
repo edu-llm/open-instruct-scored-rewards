@@ -94,6 +94,7 @@ def _eval_one_model(llm_cls, sampling_cls, model_dir, eval_sets, args) -> dict:
         greedy = llm.generate(prompts, sampling_cls(temperature=0.0, max_tokens=args.max_tokens, stop=stop))
         greedy_flags = [is_correct(g.outputs[0].text, r["answer"]) for g, r in zip(greedy, rows)]
         maj_flags: list[bool] = []
+        pass_flags: list[bool] = []  # any-of-k correct -> capability ceiling (pass@k)
         if args.maj_k > 1:
             samp = llm.generate(
                 prompts,
@@ -105,10 +106,18 @@ def _eval_one_model(llm_cls, sampling_cls, model_dir, eval_sets, args) -> dict:
                 correct = [is_correct(c, r["answer"]) for c in cands]
                 answers = [extract_answer(c) for c in cands]
                 maj_flags.append(majority_correct(answers, correct))
+                pass_flags.append(any(correct))
         result[dataset] = {
             "greedy": accuracy(greedy_flags),
             f"maj@{args.maj_k}": accuracy(maj_flags) if maj_flags else None,
+            f"pass@{args.maj_k}": accuracy(pass_flags) if pass_flags else None,
             "n": len(rows),
+            # Per-problem correctness (0/1), same row order across all models -> enables a PAIRED
+            # PRM-vs-ORM comparison (McNemar on discordant problems + bootstrap CI on the paired
+            # difference), which has power where two low marginal accuracies do not.
+            "greedy_flags": [int(x) for x in greedy_flags],
+            "maj_flags": [int(x) for x in maj_flags],
+            "pass_flags": [int(x) for x in pass_flags],
         }
     del llm
     return result
@@ -176,7 +185,9 @@ def main() -> None:
     for name, _ in models:
         for dataset in eval_sets:
             m = report["models"][name][dataset]
-            print(f"  {name:10s} {dataset:6s} greedy={m['greedy']:.4f} maj@{args.maj_k}={m[f'maj@{args.maj_k}']}", flush=True)
+            print(f"  {name:10s} {dataset:6s} greedy={m['greedy']:.4f} "
+                  f"maj@{args.maj_k}={m[f'maj@{args.maj_k}']} pass@{args.maj_k}={m.get(f'pass@{args.maj_k}')}",
+                  flush=True)
     print(f"EVAL DONE: report=s3://{bucket}/{key.rstrip('/')}/eval_report.json", flush=True)
 
 
