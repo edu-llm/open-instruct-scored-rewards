@@ -114,6 +114,7 @@ REWARD_WEIGHT=${REWARD_WEIGHT:-1.0}
 GROUP_SCORER_STRICT=${GROUP_SCORER_STRICT:-0}
 GROUP_MAX_SCORE=${GROUP_MAX_SCORE:-1.0}
 APPLY_VERIFIABLE_REWARD=${APPLY_VERIFIABLE_REWARD:-1}
+ENABLE_QUEUE_DASHBOARD=${ENABLE_QUEUE_DASHBOARD:-1}
 
 # Which fitted head, and whether a length band is added on top of it. Both are arguments to
 # the scorer rather than edits to it, so an arm is a wrapper that exports three variables.
@@ -286,6 +287,7 @@ exec python -u open_instruct/grpo_fast.py \
     --rho_clamp_upper_bound "$RHO_CLAMP_UPPER" \
     --rho_mask_lower_bound "$RHO_MASK_LOWER" \
     --rho_mask_upper_bound "$RHO_MASK_UPPER" \
+    --enable_queue_dashboard "$([ "$ENABLE_QUEUE_DASHBOARD" = 1 ] && echo True || echo False)" \
     "${tuning[@]}" \
     --lr_scheduler_type constant_with_warmup \
     --warmup_ratio 0.03 \

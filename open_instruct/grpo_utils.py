@@ -749,6 +749,8 @@ def perform_weight_sync(
     *,
     progress: bool = False,
     inflight_updates: bool = False,
+    manage_actor_pause: bool = True,
+    timeout: float | None = None,
 ) -> tuple[dict[str, float], list]:
     """Pause actors, broadcast weights, await/skip inner engine RPCs, wake engines, resume actors.
 
@@ -757,22 +759,41 @@ def perform_weight_sync(
     awaited before waking. Pass `inflight_updates=True` to skip that inner
     await — either because `broadcast_refs` are already engine RPC refs, or
     because updates are intentionally left in flight.
+
+    `manage_actor_pause=False` is for callers that paused and drained rollout
+    actors before launching `broadcast_refs`. `timeout` is one shared deadline
+    across pause, broadcast, update completion, wake, and resume.
     """
     start = time.perf_counter()
-    ray.get(actor_manager.set_should_stop.remote(True))
-    try:
-        results, actor_sync_times = utils.ray_get_with_progress(
-            broadcast_refs, desc="Broadcasting weights to vLLM engines", enable=progress
-        )
-        if not inflight_updates:
-            utils.ray_get_with_progress(
-                itertools.chain.from_iterable(results), desc="Waiting for vLLM engine update RPCs", enable=progress
-            )
+    deadline = start + timeout if timeout is not None else None
+
+    def remaining() -> float | None:
+        if deadline is None:
+            return None
+        value = deadline - time.perf_counter()
+        if value <= 0:
+            raise TimeoutError("Weight sync exceeded its shared deadline")
+        return value
+
+    if manage_actor_pause:
+        ray.get(actor_manager.set_should_stop.remote(True), timeout=remaining())
+    results, actor_sync_times = utils.ray_get_with_progress(
+        broadcast_refs, desc="Broadcasting weights to vLLM engines", enable=progress, timeout=remaining()
+    )
+    if not inflight_updates:
         utils.ray_get_with_progress(
-            [e.wake_up.remote() for e in vllm_engines], desc="Waking up vLLM engines", enable=progress
+            itertools.chain.from_iterable(results),
+            desc="Waiting for vLLM engine update RPCs",
+            enable=progress,
+            timeout=remaining(),
         )
-    finally:
-        ray.get(actor_manager.set_should_stop.remote(False))
+    utils.ray_get_with_progress(
+        [e.wake_up.remote() for e in vllm_engines], desc="Waking up vLLM engines", enable=progress, timeout=remaining()
+    )
+    if manage_actor_pause:
+        # Resume only after a successful wake. On failure the caller must tear
+        # down or recover the sleeping/partially-updated engines explicitly.
+        ray.get(actor_manager.set_should_stop.remote(False), timeout=remaining())
     sync_time_stats = {"time/weight_sync": time.perf_counter() - start}
     if actor_sync_times:
         sync_time_stats["time/weight_sync_mean"] = float(np.mean(actor_sync_times))

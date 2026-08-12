@@ -94,6 +94,9 @@ export WANDB_PROJECT=${WANDB_PROJECT:-pedagogy-rm-qwen30}
 export WANDB_RESPONSE_SAMPLES=${WANDB_RESPONSE_SAMPLES:-4}
 export WANDB_RESPONSE_EVERY=${WANDB_RESPONSE_EVERY:-5}
 export WANDB_CONSOLE=${WANDB_CONSOLE:-off}
+# The dashboard is unreachable inside AWS Batch and adds a Ray-owned polling
+# thread to failure cleanup. Keep it off so the original exception is visible.
+export ENABLE_QUEUE_DASHBOARD=${ENABLE_QUEUE_DASHBOARD:-0}
 
 if [ -n "${EDULLM_RUN_ID:-}" ]; then
     # eduLLM injects a team-scoped service key and joins W&B to the platform run

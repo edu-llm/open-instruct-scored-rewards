@@ -3,8 +3,10 @@ import os
 import threading
 import time
 import unittest
+from queue import Queue
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import ray
 import torch
@@ -949,6 +951,110 @@ class TestPeftWeightSync(unittest.TestCase):
         torch.testing.assert_close(merged, expected, rtol=1e-4, atol=1e-5)
         # Unmerge has to restore the base, or each step would compound into it.
         torch.testing.assert_close(restored, before, rtol=1e-4, atol=1e-5)
+
+
+class TestWeightSyncCoordination(unittest.TestCase):
+    def test_rollouts_pause_and_drain_before_broadcast(self):
+        from open_instruct import grpo_fast  # noqa: PLC0415
+
+        events = []
+
+        class RemoteCall:
+            def __init__(self, fn):
+                self.remote = fn
+
+        stop_event = threading.Event()
+
+        def set_should_stop(value):
+            events.append(f"pause:{value}")
+            if not value:
+                stop_event.set()
+
+        actor_manager = SimpleNamespace(set_should_stop=RemoteCall(set_should_stop))
+        engine = SimpleNamespace(
+            pause_and_wait_for_idle=RemoteCall(lambda timeout: events.append("pause_idle")),
+            resume_admission=RemoteCall(lambda: events.append("resume_admission")),
+        )
+        learner = SimpleNamespace(
+            broadcast_to_vllm=RemoteCall(lambda step: events.append(f"broadcast:{step}") or f"broadcast-{step}")
+        )
+        policy_group = SimpleNamespace(models=[learner])
+        trigger = grpo_fast.WeightSyncTrigger(step=1)
+        deadline = trigger.notify(step=1, timeout=grpo_fast.WEIGHT_SYNC_TIMEOUT_S)
+
+        def get_with_progress(refs, **kwargs):
+            list(refs)
+            return [], 0.0
+
+        def perform_weight_sync(refs, engines, manager, **kwargs):
+            events.append("sync")
+            self.assertEqual(refs, ["broadcast-1"])
+            self.assertFalse(kwargs["manage_actor_pause"])
+            self.assertGreater(kwargs["timeout"], 0)
+            self.assertLessEqual(kwargs["timeout"], grpo_fast.WEIGHT_SYNC_TIMEOUT_S)
+            return {"time/weight_sync": 1.0}, []
+
+        with (
+            patch.object(grpo_fast.ray, "get", side_effect=lambda value, **kwargs: value),
+            patch.object(grpo_fast, "ray_get_with_progress", side_effect=get_with_progress),
+            patch.object(grpo_fast.grpo_utils, "perform_weight_sync", side_effect=perform_weight_sync),
+        ):
+            grpo_fast.weight_sync_thread(
+                SimpleNamespace(verbose=False),
+                stop_event,
+                threading.Lock(),
+                trigger,
+                policy_group,
+                [engine],
+                actor_manager,
+                Queue(),
+                inflight_updates=False,
+            )
+
+        self.assertEqual(
+            events, ["pause:True", "pause_idle", "broadcast:1", "sync", "resume_admission", "pause:False"]
+        )
+        trigger.wait_for_completion(1, Mock(done=Mock(return_value=False)), deadline=deadline)
+
+    def test_failed_sync_leaves_rollout_admission_paused(self):
+        from open_instruct import grpo_fast  # noqa: PLC0415
+
+        events = []
+
+        class RemoteCall:
+            def __init__(self, fn):
+                self.remote = fn
+
+        actor_manager = SimpleNamespace(set_should_stop=RemoteCall(lambda value: events.append(f"pause:{value}")))
+        engine = SimpleNamespace(
+            pause_and_wait_for_idle=RemoteCall(lambda timeout: events.append("pause_idle")),
+            resume_admission=RemoteCall(lambda: events.append("resume_admission")),
+        )
+        learner = SimpleNamespace(
+            broadcast_to_vllm=RemoteCall(lambda step: events.append(f"broadcast:{step}") or "broadcast")
+        )
+        trigger = grpo_fast.WeightSyncTrigger(step=1)
+        trigger.notify(step=1, timeout=grpo_fast.WEIGHT_SYNC_TIMEOUT_S)
+
+        with (
+            patch.object(grpo_fast.ray, "get", side_effect=lambda value, **kwargs: value),
+            patch.object(grpo_fast, "ray_get_with_progress", return_value=([], 0.0)),
+            patch.object(grpo_fast.grpo_utils, "perform_weight_sync", side_effect=TimeoutError("stuck update")),
+            self.assertRaises(RuntimeError),
+        ):
+            grpo_fast.weight_sync_thread(
+                SimpleNamespace(verbose=False),
+                threading.Event(),
+                threading.Lock(),
+                trigger,
+                SimpleNamespace(models=[learner]),
+                [engine],
+                actor_manager,
+                Queue(),
+                inflight_updates=False,
+            )
+
+        self.assertEqual(events, ["pause:True", "pause_idle", "broadcast:1"])
 
 
 if __name__ == "__main__":

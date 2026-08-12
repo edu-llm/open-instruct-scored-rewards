@@ -218,6 +218,71 @@ class TestVllmUtils3(unittest.TestCase):
         self.assertEqual(result.request_info.rollout_states, [{}, {}])
 
 
+class TestRolloutDrain(unittest.TestCase):
+    def test_pause_winning_admission_lock_keeps_fetched_prompt_pending(self):
+        actor = object.__new__(vllm_utils.LLMRayActor)
+        actor.active_tasks = {}
+        actor.inference_batch_size = 1
+        actor._admission_lock = vllm_utils.threading.Lock()
+        actor._admission_paused = False
+        actor._should_stop = MagicMock(return_value=False)
+        fetched = vllm_utils.threading.Event()
+        actor.prompt_queue = MagicMock()
+        actor.prompt_queue.get.side_effect = lambda: fetched.set() or MagicMock()
+
+        actor._admission_lock.acquire()
+        errors = []
+
+        def run_prefetch():
+            try:
+                vllm_utils._prefetch_worker(actor)
+            except RuntimeError as error:
+                errors.append(error)
+
+        with (
+            mock.patch.object(vllm_utils, "add_request") as add_request,
+            mock.patch.object(vllm_utils.time, "sleep", side_effect=RuntimeError("stop test worker")),
+        ):
+            worker = vllm_utils.threading.Thread(target=run_prefetch)
+            worker.start()
+            try:
+                self.assertTrue(fetched.wait(timeout=1.0))
+                actor._admission_paused = True
+            finally:
+                if actor._admission_lock.locked():
+                    actor._admission_lock.release()
+            worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(errors)
+        add_request.assert_not_called()
+
+    def test_pause_and_wait_for_idle_closes_admission(self):
+        actor = object.__new__(vllm_utils.LLMRayActor)
+        actor.active_tasks = {}
+        actor._admission_lock = vllm_utils.threading.Lock()
+        actor._admission_paused = False
+        actor.check_background_threads = MagicMock()
+
+        actor.pause_and_wait_for_idle(timeout=1.0)
+
+        self.assertTrue(actor._admission_paused)
+        actor.check_background_threads.assert_called_once()
+
+    def test_pause_and_wait_for_idle_times_out_with_active_tasks(self):
+        actor = object.__new__(vllm_utils.LLMRayActor)
+        actor.active_tasks = {"request": MagicMock()}
+        actor._admission_lock = vllm_utils.threading.Lock()
+        actor._admission_paused = False
+        actor.check_background_threads = MagicMock()
+
+        with (
+            mock.patch.object(vllm_utils.time, "perf_counter", side_effect=[0.0, 2.0]),
+            self.assertRaisesRegex(RuntimeError, "active_tasks=1"),
+        ):
+            actor.pause_and_wait_for_idle(timeout=1.0)
+
+
 class TestModelDimsFromVllmConfig(unittest.TestCase):
     def test_model_dims_from_vllm_config(self):
         expected_dims = ModelDims(

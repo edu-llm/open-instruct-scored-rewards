@@ -1627,28 +1627,54 @@ class WeightSyncTrigger:
 
     def __init__(self, step: int) -> None:
         self._event = threading.Event()
-        self._lock = threading.Lock()
+        self._condition = threading.Condition()
         self._step: int = step
+        self._deadline: float | None = None
+        self._completed_step: int = step - 1
 
-    def notify(self, step: int) -> None:
-        with self._lock:
+    def notify(self, step: int, timeout: float) -> float:
+        with self._condition:
             self._step = step
-        self._event.set()
+            self._deadline = time.perf_counter() + timeout
+            self._event.set()
+            return self._deadline
 
     def wait(self, timeout: float | None = None) -> bool:
         return self._event.wait(timeout=timeout)
 
-    def get_step_and_clear(self) -> int:
+    def get_step_and_clear(self) -> tuple[int, float]:
         """Atomically gets the step and clears the event."""
-        with self._lock:
+        with self._condition:
+            if self._deadline is None:
+                raise RuntimeError("Weight sync trigger has no deadline")
             step = self._step
+            deadline = self._deadline
             self._event.clear()
-            return step
+            return step, deadline
+
+    def mark_completed(self, step: int) -> None:
+        with self._condition:
+            self._completed_step = max(self._completed_step, step)
+            self._condition.notify_all()
+
+    def wait_for_completion(self, step: int, future: futures.Future, deadline: float) -> None:
+        """Wait for one requested policy version, surfacing worker errors promptly."""
+        while True:
+            if future.done():
+                future.result()
+            with self._condition:
+                if self._completed_step >= step:
+                    return
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    raise RuntimeError(f"Weight sync for model step {step} exceeded its shared deadline")
+                self._condition.wait(timeout=min(remaining, 0.1))
 
 
 def weight_sync_thread(
     args: grpo_utils.GRPOExperimentConfig,
     stop_event: threading.Event,
+    lifecycle_lock: threading.Lock,
     weight_sync_trigger: WeightSyncTrigger,
     policy_group: ModelGroup,
     vllm_engines,
@@ -1665,16 +1691,58 @@ def weight_sync_thread(
             continue
 
         # Clear the event for next iteration
-        target_model_step = weight_sync_trigger.get_step_and_clear()
+        target_model_step, deadline = weight_sync_trigger.get_step_and_clear()
+
+        def remaining(deadline: float = deadline, target_model_step: int = target_model_step) -> float:
+            value = deadline - time.perf_counter()
+            if value <= 0:
+                raise TimeoutError(f"Weight sync for model step {target_model_step} exceeded its shared deadline")
+            return value
+
         try:
+            # Stop new global admission for either mode. Inflight updates retain
+            # existing active requests; non-inflight updates also close each
+            # engine's local admission gate and drain them.
+            ray.get(actor_manager.set_should_stop.remote(True), timeout=remaining())
+            if not inflight_updates:
+                drain_timeout = remaining()
+                ray_get_with_progress(
+                    [engine.pause_and_wait_for_idle.remote(drain_timeout) for engine in vllm_engines],
+                    desc="Draining vLLM rollouts before weight sync",
+                    enable=args.verbose,
+                    timeout=remaining(),
+                )
+
             broadcast_refs = [m.broadcast_to_vllm.remote(target_model_step) for m in policy_group.models]
             sync_time_stats, _ = grpo_utils.perform_weight_sync(
-                broadcast_refs, vllm_engines, actor_manager, progress=args.verbose, inflight_updates=inflight_updates
+                broadcast_refs,
+                vllm_engines,
+                actor_manager,
+                progress=args.verbose,
+                inflight_updates=inflight_updates,
+                manage_actor_pause=False,
+                timeout=remaining(),
             )
+
+            # Cleanup acquires this same lock before setting stop_event and
+            # reasserting the global pause. Therefore a successful sync either
+            # resumes completely before cleanup, or observes stop and stays paused.
+            with lifecycle_lock:
+                if stop_event.is_set():
+                    return
+                if not inflight_updates:
+                    ray_get_with_progress(
+                        [engine.resume_admission.remote() for engine in vllm_engines],
+                        desc="Resuming vLLM rollout admission",
+                        enable=args.verbose,
+                        timeout=remaining(),
+                    )
+                ray.get(actor_manager.set_should_stop.remote(False), timeout=remaining())
         except Exception as e:
             logger.exception("[Weight Sync Thread] Weight Sync failed")
             raise RuntimeError from e
 
+        weight_sync_trigger.mark_completed(target_model_step)
         try:
             weight_sync_metrics_Q.put_nowait(sync_time_stats)
         except Full:
@@ -1912,27 +1980,51 @@ def cleanup_judge_clients():
 
 def cleanup_training_resources(
     stop_event: threading.Event,
+    lifecycle_lock: threading.Lock,
     executor: futures.ThreadPoolExecutor,
     queues: list[ray_queue.Queue],
     actor_manager: ActorManager,
 ) -> None:
     """Clean up all training resources including threads and Ray queues."""
-    stop_event.set()
+    cleanup_deadline = time.perf_counter() + 5.0
+
+    def cleanup_remaining() -> float:
+        return max(cleanup_deadline - time.perf_counter(), 0.001)
+
+    actor_manager_available = True
+    with lifecycle_lock:
+        stop_event.set()
+        try:
+            logger.info("Signaling all actors to stop...")
+            ray.get(actor_manager.set_should_stop.remote(True), timeout=cleanup_remaining())
+            logger.info("✅ Signaled all actors to stop")
+        except Exception as e:
+            actor_manager_available = False
+            logger.warning(f"ActorManager stop signal did not finish; killing actor: {e}")
+            with contextlib.suppress(Exception):
+                ray.kill(actor_manager)
+
+    if actor_manager_available:
+        try:
+            logger.info("Cleaning up ActorManager resources...")
+            ray.get(actor_manager.cleanup.remote(), timeout=cleanup_remaining())
+            logger.info("✅ ActorManager resources cleaned up")
+        except Exception as e:
+            # Cleanup must never hide the exception that ended training.
+            logger.warning(f"ActorManager cleanup did not finish; killing actor: {e}")
+            with contextlib.suppress(Exception):
+                ray.kill(actor_manager)
+
+    # Let the bounded sync worker finish while its Ray actors and queues still
+    # exist. Destroying those dependencies first caused the original deadlock.
+    logger.info("Shutting down thread pool executor...")
+    executor.shutdown(wait=True, cancel_futures=True)
 
     try:
         data_prep_actor = ray.get_actor(data_loader_lib.DATA_PREP_ACTOR_NAME)
         ray.kill(data_prep_actor)
     except (ray.exceptions.RayError, ValueError) as e:
         logger.warning(f"Could not shut down DataPreparationActor: {e}")
-
-    logger.info("Signaling all actors to stop...")
-    ray.get(actor_manager.set_should_stop.remote(True))
-    logger.info("✅ Signaled all actors to stop")
-
-    # Clean up ActorManager resources
-    logger.info("Cleaning up ActorManager resources...")
-    ray.get(actor_manager.cleanup.remote())
-    logger.info("✅ ActorManager resources cleaned up")
 
     logger.info("Pushing shutdown sentinel to queues...")
     # Push sentinel to the first queue (inference_results_Q)
@@ -1942,8 +2034,6 @@ def cleanup_training_resources(
     logger.info("Shutting down Ray queues...")
     if queues and len(queues) > 0:
         [queue.shutdown() for queue in queues]
-    logger.info("Shutting down thread pool executor...")
-    executor.shutdown(wait=True)
 
     # Clean up judge clients
     cleanup_judge_clients()
@@ -1981,6 +2071,7 @@ def run_training(
     wandb_url,
     tc,
     stop_event,
+    lifecycle_lock,
     executor,
     inference_results_Q,
     prompt_Q,
@@ -2054,6 +2145,7 @@ def run_training(
             weight_sync_thread,
             args,
             stop_event,
+            lifecycle_lock,
             trigger,
             policy_group,
             vllm_engines,
@@ -2063,8 +2155,8 @@ def run_training(
         )
 
         logger.info(f"[Main Thread] Triggering initial native vLLM weight sync at step {initial_step}.")
-        trigger.notify(step=initial_step)
-        health_check_fn(future, expect_new_weight_sync=True)
+        deadline = trigger.notify(step=initial_step, timeout=WEIGHT_SYNC_TIMEOUT_S)
+        trigger.wait_for_completion(initial_step, future, deadline)
         return future, trigger
 
     if checkpoint_state and "num_total_tokens" in checkpoint_state:
@@ -2216,7 +2308,9 @@ def run_training(
         # every completed optimizer step, including the first step after a
         # fresh start or resume, so vLLM never skips one policy version.
         logger.debug(f"[Main Thread] Triggered weight sync for step {training_step}")
-        weight_sync_trigger.notify(step=training_step)
+        deadline = weight_sync_trigger.notify(step=training_step, timeout=WEIGHT_SYNC_TIMEOUT_S)
+        if not streaming_config.inflight_updates:
+            weight_sync_trigger.wait_for_completion(training_step, weight_sync_thread_future, deadline)
 
         last_eval_collected = grpo_utils.maybe_evaluate(
             args,
@@ -2585,6 +2679,7 @@ def main(
     weight_sync_metrics_Q = Queue(maxsize=streaming_config.async_steps)
 
     stop_event = threading.Event()
+    lifecycle_lock = threading.Lock()
     executor = futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="grpo")
 
     try:
@@ -2603,6 +2698,7 @@ def main(
             wandb_url,
             tc,
             stop_event,
+            lifecycle_lock,
             executor,
             inference_results_Q,
             prompt_Q,
@@ -2617,13 +2713,21 @@ def main(
 
         if args.push_to_hub and (not dist.is_initialized() or dist.get_rank() == 0):
             push_folder_to_hub(args.output_dir, args.hf_repo_id, args.hf_repo_revision)
-    except Exception as e:
-        if args.send_slack_alerts:
+    except BaseException as e:
+        # Emit the initiating error before teardown. A stuck cleanup previously
+        # suppressed the interpreter's eventual traceback and left only a vague
+        # ActorManager shutdown line in CloudWatch.
+        logger.exception("Training failed; beginning bounded cleanup")
+        if isinstance(e, Exception) and args.send_slack_alerts:
             utils.send_slack_message(f"<!here> A RL job has died. Error message: {e}.")
         raise
     finally:
         cleanup_training_resources(
-            stop_event, executor, [inference_results_Q, prompt_Q, evaluation_inference_results_Q], actor_manager
+            stop_event,
+            lifecycle_lock,
+            executor,
+            [inference_results_Q, prompt_Q, evaluation_inference_results_Q],
+            actor_manager,
         )
 
     # Ai2 logic: we use /output to store the artifacts of the job, so we

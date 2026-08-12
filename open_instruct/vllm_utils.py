@@ -434,13 +434,26 @@ async def _check_health(port: int) -> None:
 
 
 def _prefetch_worker(actor: "LLMRayActor") -> None:
+    pending_request = None
     while True:
-        if actor._should_stop() or len(actor.active_tasks) >= actor.inference_batch_size:
-            time.sleep(DRAIN_ACTIVE_TASKS_SLEEP_S)
-            continue
+        if pending_request is None:
+            if actor._should_stop() or len(actor.active_tasks) >= actor.inference_batch_size:
+                time.sleep(DRAIN_ACTIVE_TASKS_SLEEP_S)
+                continue
+            pending_request = actor.prompt_queue.get()
 
-        request = actor.prompt_queue.get()
-        add_request(actor, request)
+        # Admission and pause use the same lock. If prefetch won the lock first,
+        # pause observes the newly inserted active task and drains it. If pause
+        # won first, this request stays local until the completed sync resumes.
+        with actor._admission_lock:
+            if actor._admission_paused or actor._should_stop():
+                admitted = False
+            else:
+                add_request(actor, pending_request)
+                pending_request = None
+                admitted = True
+        if not admitted:
+            time.sleep(DRAIN_ACTIVE_TASKS_SLEEP_S)
 
 
 def add_request(actor: "LLMRayActor", request: PromptRequest) -> None:
@@ -622,6 +635,8 @@ class LLMRayActor:
         self.inflight_updates = inflight_updates
         self.request_metadata = {}
         self.active_tasks = {}
+        self._admission_lock = threading.Lock()
+        self._admission_paused = False
         self.request_outputs = {}
         self.reward_config = reward_config
         self.train_dataset = train_dataset
@@ -781,6 +796,25 @@ class LLMRayActor:
 
     def init_weight_transfer_engine(self, request: WeightTransferInitRequest) -> None:
         return self._run_async(self.llm_engine.init_weight_transfer_engine(request))
+
+    def pause_and_wait_for_idle(self, timeout: float) -> None:
+        """Atomically pause local admission, then wait for active requests to drain."""
+        with self._admission_lock:
+            self._admission_paused = True
+        deadline = time.perf_counter() + timeout
+        while True:
+            self.check_background_threads()
+            if not self.active_tasks:
+                return
+            if time.perf_counter() >= deadline:
+                raise RuntimeError(
+                    f"vLLM rollout drain timed out before weight sync (active_tasks={len(self.active_tasks)})"
+                )
+            time.sleep(DRAIN_ACTIVE_TASKS_SLEEP_S)
+
+    def resume_admission(self) -> None:
+        with self._admission_lock:
+            self._admission_paused = False
 
     def _run_async(self, coro: Awaitable[Any]) -> Any:
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
