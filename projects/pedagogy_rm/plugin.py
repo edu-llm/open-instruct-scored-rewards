@@ -71,6 +71,10 @@ class PedagogyHead(GroupScorer):
         length_band: str = "",
         length_weight: float = 0.0,
         length_ramp: str = "",
+        reward_weight: float = 1.0,
+        revision: str = "",
+        device_map: str = "",
+        max_memory_gib: float = 0.0,
     ) -> None:
         import numpy as np  # noqa: PLC0415
 
@@ -83,7 +87,7 @@ class PedagogyHead(GroupScorer):
         # dimensions= still errors on anything missing, because that is a request that
         # cannot be honoured rather than a default that can be narrowed.
         asked = [d.strip() for d in dimensions.split(",") if d.strip()]
-        wanted = asked or [d for d in SIGNS if d in self.meta["dimensions"]]
+        wanted = asked or self._default_dimensions()
         missing = [d for d in wanted if d not in self.meta["dimensions"]]
         if missing:
             raise ValueError(f"{head} has no head for {missing}; it holds {sorted(self.meta['dimensions'])}")
@@ -124,6 +128,7 @@ class PedagogyHead(GroupScorer):
         self.length_lo, self.length_hi = 0, 10**9
         self.length_zero_lo, self.length_zero_hi = 0, 10**9
         self.length_weight = float(length_weight)
+        self.reward_weight = float(reward_weight)
         if length_band:
             lo, _, hi = length_band.partition("-")
             self.length_lo, self.length_hi = int(lo), int(hi)
@@ -142,6 +147,9 @@ class PedagogyHead(GroupScorer):
             raise ValueError("length_weight without length_band would reward every turn equally")
 
         self.model_name = model or self.meta["model"]
+        self.revision = revision or self.meta.get("revision") or ""
+        self.device_map = device_map
+        self.max_memory_gib = float(max_memory_gib)
         self.device, self.max_len, self.batch_size = device, max_len, int(batch_size)
         self._lock = threading.Lock()
         # Annotated because these are loaded on first use, not in __init__: without it ty
@@ -150,6 +158,10 @@ class PedagogyHead(GroupScorer):
         # transformers, which the CPU-only tests rely on.
         self._model: Any = None
         self._tokenizer: Any = None
+        self._input_device: Any = None
+
+    def _default_dimensions(self) -> list[str]:
+        return [dimension for dimension in SIGNS if dimension in self.meta["dimensions"]]
 
     def _load(self):
         """Loaded once, on first use, inside the actor that will use it."""
@@ -159,13 +171,30 @@ class PedagogyHead(GroupScorer):
             if self._model is not None:
                 return
             import torch  # noqa: PLC0415
-            from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: PLC0415
+            from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer  # noqa: PLC0415
 
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            model = AutoModelForCausalLM.from_pretrained(self.model_name, dtype=torch.bfloat16)
+            revision = self.revision or None
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, revision=revision)
+            load_kwargs: dict[str, Any] = {"dtype": torch.bfloat16, "revision": revision}
+            if self.device_map:
+                load_kwargs["device_map"] = self.device_map
+                if self.max_memory_gib:
+                    if not torch.cuda.is_available():
+                        raise RuntimeError("a sharded reward encoder requires CUDA")
+                    load_kwargs["max_memory"] = {
+                        index: f"{self.max_memory_gib:g}GiB" for index in range(torch.cuda.device_count())
+                    }
+            try:
+                model = AutoModelForCausalLM.from_pretrained(self.model_name, **load_kwargs)
+            except ValueError as causal_error:
+                print(f"causal reward encoder unavailable ({causal_error}); trying image-text model", flush=True)
+                model = AutoModelForImageTextToText.from_pretrained(self.model_name, **load_kwargs)
             self._truncate(model)
-            device = self.device if torch.cuda.is_available() else "cpu"
-            self._model = model.to(device).eval()  # ty: ignore[invalid-argument-type]  # transformers stubs type .to() as taking a model
+            if not self.device_map:
+                device = self.device if torch.cuda.is_available() else "cpu"
+                model = model.to(device)  # ty: ignore[invalid-argument-type]  # transformers stubs type .to() as taking a model
+            self._model = model.eval()
+            self._input_device = next(self._model.get_input_embeddings().parameters()).device
             for p in self._model.parameters():  # the encoder is never trained
                 p.requires_grad_(False)
 
@@ -185,10 +214,21 @@ class PedagogyHead(GroupScorer):
         and wrong. Keeping one spare block leaves the read layers raw.
         """
         deepest = max(self.meta["dimensions"][d]["layer"] for d in self.dims)
-        blocks = getattr(getattr(model, "model", None), "layers", None)
-        if blocks is None or deepest + 1 >= len(blocks):
+        owner = None
+        blocks = None
+        for path in (("model",), ("language_model",), ("model", "language_model"), ("model", "model")):
+            candidate = model
+            for name in path:
+                candidate = getattr(candidate, name, None)
+                if candidate is None:
+                    break
+            candidate_blocks = getattr(candidate, "layers", None)
+            if candidate_blocks is not None:
+                owner, blocks = candidate, candidate_blocks
+                break
+        if blocks is None or owner is None or deepest + 1 >= len(blocks):
             return
-        model.model.layers = blocks[: deepest + 1]
+        owner.layers = blocks[: deepest + 1]
         self.kept_layers = deepest + 1
 
     def context(self, sample: Sample) -> tuple[list[dict], str]:
@@ -220,21 +260,46 @@ class PedagogyHead(GroupScorer):
         cells = {(self.meta["dimensions"][d]["pooling"], self.meta["dimensions"][d]["layer"]) for d in self.dims}
         out: dict[tuple[str, int], list] = {cell: [] for cell in cells}
         for start in range(0, len(contexts), self.batch_size):
+            prepared = []
             for messages, turn in contexts[start : start + self.batch_size]:
-                prefix = self._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                whole = self._tokenizer.apply_chat_template(
-                    [*messages, {"role": "assistant", "content": turn}], tokenize=False
+                prefix = self._tokenizer.apply_chat_template(
+                    messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
                 )
-                prefix_len = self._tokenizer(prefix, add_special_tokens=False, return_tensors="pt").input_ids.shape[1]
-                ids = self._tokenizer(whole, add_special_tokens=False, return_tensors="pt").input_ids
-                ids = ids[:, -self.max_len :].to(self._model.device)
-                n = self._tokenizer(turn, add_special_tokens=False, return_tensors="pt").input_ids.shape[1]
-                lo = max(0, min(prefix_len, ids.shape[1] - 1))
-                hi = max(lo + 1, min(lo + n, ids.shape[1]))
-                with torch.no_grad():
-                    hidden = self._model(ids, output_hidden_states=True).hidden_states
+                empty = self._tokenizer.apply_chat_template(
+                    [*messages, {"role": "assistant", "content": ""}], tokenize=True, return_tensors="pt"
+                )
+                whole = self._tokenizer.apply_chat_template(
+                    [*messages, {"role": "assistant", "content": turn}], tokenize=True, return_tensors="pt"
+                )
+                prefix_len = prefix.shape[1]
+                suffix_len = max(1, empty.shape[1] - prefix_len)
+                content_stop = whole.shape[1] - suffix_len
+                trimmed_left = max(0, whole.shape[1] - self.max_len)
+                ids = whole[0, -self.max_len :]
+                lo = max(0, min(prefix_len - trimmed_left, ids.shape[0] - 1))
+                hi = max(lo + 1, min(content_stop - trimmed_left, ids.shape[0]))
+                prepared.append((ids, lo, hi))
+
+            width = max(ids.shape[0] for ids, _, _ in prepared)
+            pad = self._tokenizer.pad_token_id
+            pad = self._tokenizer.eos_token_id if pad is None else pad
+            input_ids = torch.full((len(prepared), width), pad, dtype=prepared[0][0].dtype)
+            attention_mask = torch.zeros((len(prepared), width), dtype=torch.long)
+            spans = []
+            for index, (ids, lo, hi) in enumerate(prepared):
+                offset = width - ids.shape[0]
+                input_ids[index, offset:] = ids
+                attention_mask[index, offset:] = 1
+                spans.append((offset + lo, offset + hi))
+            with torch.no_grad():
+                hidden = self._model(
+                    input_ids.to(self._input_device),
+                    attention_mask=attention_mask.to(self._input_device),
+                    output_hidden_states=True,
+                ).hidden_states
+            for index, (lo, hi) in enumerate(spans):
                 for pooling, layer in cells:
-                    h = hidden[layer][0]
+                    h = hidden[layer][index]
                     vec = h[-1] if pooling == "eot" else h[hi - 1] if pooling == "last" else h[lo:hi].mean(0)
                     out[(pooling, layer)].append(vec.float().cpu().numpy().astype(np.float32))
         return out
@@ -305,6 +370,8 @@ class PedagogyHead(GroupScorer):
                 fit = self.length_fit(n)
                 score += self.length_weight * fit
                 dims["length"] = fit
+            info["unweighted_score"] = score
+            score *= self.reward_weight
             results.append(ScoreResult(score=score, dimensions=dims, info=info))
         return results
 

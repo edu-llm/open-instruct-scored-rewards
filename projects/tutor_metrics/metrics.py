@@ -27,6 +27,16 @@ import dataclasses
 # Graesser's ladder, ordered from least to most tutor control. The ORDER is load-bearing: the
 # reward gives partial credit for an adjacent rung, so a wrong order silently changes the metric.
 RUNGS: tuple[str, ...] = ("pump", "hint", "prompt", "tell_step", "tell_answer")
+# The shipped label rubric records assistance on three ordered levels, not all
+# five named Graesser rungs. Keep that compression explicit at the reward
+# boundary instead of pretending a 1-3 head can distinguish pump from hint.
+TARGET_LEVEL: dict[str, float] = {
+    "pump": 1.0,
+    "hint": 1.0,
+    "prompt": 2.0,
+    "tell_step": 3.0,
+    "tell_answer": 3.0,
+}
 
 RUNG_ANCHORS: dict[str, str] = {
     "pump": "Invites the student to continue with no new content. 'Go on', 'what next?', 'and so?'",
@@ -380,3 +390,40 @@ def reward(labels: dict[str, float], target: str, length_term: float = 0.0) -> f
         total -= weight * float(bool(labels.get(key)))
 
     return total + length_term
+
+
+def probe_reward(labels: dict[str, float], target: str, length_term: float = 0.0) -> tuple[float, dict[str, float]]:
+    """Compose continuous 1-3 probe predictions into the deployed reward.
+
+    Agent labels use 1=absent/low, 2=partial/medium, 3=clear/high. Converting
+    them with ``bool(value)`` would make even an explicit absence positive.
+    Continuous presence preserves useful ranking inside a GRPO group while
+    keeping every term within the bounds used by the reward design.
+    """
+    if target not in TARGET_LEVEL:
+        raise ValueError(f"{target!r} is not a target level; have {sorted(TARGET_LEVEL)}")
+    if "assistance_level" not in labels:
+        raise ValueError("the deployed reward requires an assistance_level head")
+
+    def presence(key: str) -> float:
+        value = float(labels.get(key, 1.0))
+        return min(1.0, max(0.0, (value - 1.0) / 2.0))
+
+    actual = min(3.0, max(1.0, float(labels["assistance_level"])))
+    target_value = TARGET_LEVEL[target]
+    contingency_score = max(0.0, 1.0 - 0.5 * abs(actual - target_value))
+
+    contribution_mass = sum(presence(metric.key) for metric in CONTRIBUTIONS)
+    terms = {
+        "contingency": WEIGHTS["contingency"] * contingency_score,
+        "contributions": WEIGHTS["contributions"] * min(contribution_mass, CONTRIBUTION_CAP) / CONTRIBUTION_CAP,
+        "locates_student_object": WEIGHTS["locates_student_object"] * presence("locates_student_object"),
+        "verdict_with_referent": WEIGHTS["verdict_with_referent"] * presence("verdict_with_referent"),
+        "demand_is_specific": WEIGHTS["demand_is_specific"] * presence("demand_is_specific"),
+        "reference_conflict": -PENALTY_WEIGHTS["reference_conflict"] * presence("reference_conflict"),
+        "dialogue_conflict": -PENALTY_WEIGHTS["dialogue_conflict"] * presence("dialogue_conflict"),
+        "not_single_focus": -PENALTY_WEIGHTS["not_single_focus"] * presence("not_single_focus"),
+        "empty_praise": -PENALTY_WEIGHTS["empty_praise"] * presence("empty_praise"),
+        "length": float(length_term),
+    }
+    return float(sum(terms.values())), terms

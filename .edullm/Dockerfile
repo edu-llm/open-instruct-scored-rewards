@@ -1,8 +1,7 @@
 # Research image for the eduLLM platform build pipeline.
 #
-# What this image is for: GRPO on OLMo-2-7B-Instruct rewarded by the hidden-state probe
-# in projects/pedagogy_rm, run on AWS Batch. See projects/pedagogy_rm/PLATFORM.md for
-# the submission itself.
+# What this image is for: GRPO on the pedagogy policies, including Qwen3-30B-A3B,
+# rewarded by the hidden-state probe in projects/pedagogy_rm and run on AWS Batch.
 #
 # The platform supplies the registered base image as --build-arg BASE_IMAGE, already
 # pinned to a digest. Its verify_dockerfile_base gate runs before the build and refuses
@@ -65,8 +64,9 @@ RUN pip install --no-cache-dir --requirement /tmp/requirements.txt
 # compares, and the pair that decides whether `import deepspeed` works at all.
 ENV CUDA_HOME=/usr/local/lib/python3.12/site-packages/nvidia/cu13
 RUN "${CUDA_HOME}/bin/nvcc" --version \
- && python -c "import deepspeed, torch, vllm; print('deepspeed', deepspeed.__version__, 'torch', torch.__version__, 'vllm', vllm.__version__)" \
- && python -c "import re, torch; req = open('/tmp/requirements.txt').read(); pin = re.search(r'^torch==(\S+)', req, re.M).group(1); nvcc = re.search(r'^nvidia-cuda-nvcc==(\d+)[.]', req, re.M).group(1); assert torch.__version__ == pin, f'torch was moved off the pin {pin}: {torch.__version__}'; assert (torch.version.cuda or '').split('.')[0] == nvcc, f'nvidia-cuda-nvcc is pinned at CUDA {nvcc} and this torch is built for CUDA {torch.version.cuda}'"
+ && python -c "import accelerate, deepspeed, torch, vllm; print('accelerate', accelerate.__version__, 'deepspeed', deepspeed.__version__, 'torch', torch.__version__, 'vllm', vllm.__version__)" \
+ && python -c "import re, torch; req = open('/tmp/requirements.txt').read(); pin = re.search(r'^torch==(\S+)', req, re.M).group(1); nvcc = re.search(r'^nvidia-cuda-nvcc==(\d+)[.]', req, re.M).group(1); assert torch.__version__ == pin, f'torch was moved off the pin {pin}: {torch.__version__}'; assert (torch.version.cuda or '').split('.')[0] == nvcc, f'nvidia-cuda-nvcc is pinned at CUDA {nvcc} and this torch is built for CUDA {torch.version.cuda}'" \
+ && python -c "import inspect; from deepspeed import DeepSpeedEngine; from transformers import Qwen3MoeForCausalLM; from vllm import AsyncEngineArgs; assert Qwen3MoeForCausalLM; assert 'enable_expert_parallel' in inspect.signature(AsyncEngineArgs).parameters; assert 'exclude_frozen_parameters' in inspect.signature(DeepSpeedEngine.save_checkpoint).parameters"
 
 # THE CHECKSUM A CHECKPOINT WRITE ASKS FOR IS NOT IN botocore, AND NOTHING HERE BROUGHT
 # IT IN. The eduLLM platform commits a run's output by putting the payload with
@@ -80,10 +80,9 @@ RUN "${CUDA_HOME}/bin/nvcc" --version \
 # it cannot. boto3 depends on botocore without extras, so an image gets the client and
 # not the checksum.
 #
-# THIS REPOSITORY IS THE ONE WHERE IT WOULD COST MOST, because open-instruct-scored-rewards
-# -train is the only workload profile outside pre-training that declares two attempts
-# against a checkpoint contract. The failure is deterministic and arrives after the
-# training loop, so both attempts reach the same line and neither keeps anything.
+# THIS REPOSITORY IS WHERE A LATE FAILURE WOULD COST MOST: its GPU training
+# profile permits one attempt up to 24 hours. A deterministic checksum failure
+# after the loop would therefore leave no automatic retry and no published output.
 # OLMo-core found it that way: run run_019fcf53 on 2026-08-05 trained twenty steps on a
 # T4, logged every one of them, and died on the first line after the loop with
 # `MissingDependencyException: Using CRC32C requires an additional dependency`.
@@ -114,28 +113,46 @@ RUN pip install --no-cache-dir boto3 "botocore[crt]" \
 
 COPY . /opt/open-instruct
 
-# THE MODEL WEIGHTS ARE NOT BAKED IN. OLMo-2-7B-Instruct is about 15GB, which would take
-# this image past what a standard GitHub runner can build, and the Batch instances sit in
-# public subnets with a route to an internet gateway, so the container fetches them from
-# the Hub on first use. HF_HOME is on the container filesystem rather than anywhere
-# shared: every attempt downloads its own copy, which costs minutes of a run that lasts
-# hours.
+# Weight sync is a silent-corruption boundary for MoE: Qwen uses separate
+# expert modules while OLMoE uses stacked tensors. Exercise both layouts in the
+# Linux/vLLM image, since vLLM has no macOS wheel for the local preflight.
+RUN python -m pytest -q \
+      open_instruct/test_moe_weight_split.py \
+      projects/pedagogy_rm/test_platform_run.py \
+      projects/tutor_metrics/test_probe_reward.py \
+      projects/tutor_metrics/test_plugin.py \
+      projects/tutor_metrics/test_upgrade_probe_head.py
+
+# THE MODEL WEIGHTS ARE NOT BAKED IN. Qwen3-30B-A3B is about 61GB in bf16 before
+# the separate probe encoder, which would make the research image needlessly large.
+# Batch fetches immutable revisions from the Hub at container start. HF_HOME is local
+# to the attempt, so a retry downloads again; checkpoint state, not the model cache,
+# is what the platform persists.
 ENV HF_HOME=/tmp/hf-cache \
     HF_HUB_CACHE=/tmp/hf-cache/hub \
     CACHE_ROOT=/tmp \
     PYTHONPATH=/opt/open-instruct
 
-# THE PROBE AND ITS PROMPTS ARE BAKED IN, because they are what makes this run this run.
-# head.npz is the fitted reward - 225KB of Ridge coefficients plus the metadata naming
-# the encoder checkpoint, pooling and layer each dimension reads - and the two jsonl
-# files are the tutoring moments the policy is asked to respond to. They live under
-# projects/pedagogy_rm/artifacts/ in git because the repository's .gitignore excludes
-# data/, and are copied to the paths scripts/train.sh expects so that the same command
-# line runs here and on a cluster where data/ is real.
+# THE MULTI-HEAD REWARD AND ITS PROMPTS ARE BAKED IN. The NPZ pins one frozen
+# encoder revision and stores one tiny readout per metric; the JSONL rows carry
+# the prescribed student-state target that makes contingency computable.
+# `train_qwen3_30b_a3b.sh` runs a schema/context/leakage preflight before any
+# model download or GPU allocation is used for training.
 RUN mkdir -p data/rl \
- && cp projects/pedagogy_rm/artifacts/head.npz data/head.npz \
+ && cp projects/pedagogy_rm/artifacts/*.npz data/ \
+ && cp projects/pedagogy_rm/artifacts/*.jsonl data/rl/ \
  && cp projects/pedagogy_rm/artifacts/rl_train.jsonl data/rl/train.jsonl \
  && cp projects/pedagogy_rm/artifacts/rl_eval.jsonl data/rl/eval.jsonl
+
+RUN test -s data/tutor_metrics_head.npz \
+ && test -s data/rl/qwen30_train.jsonl \
+ && test -s data/rl/qwen30_eval.jsonl \
+ && python -m projects.tutor_metrics.preflight_rl \
+      --head data/tutor_metrics_head.npz \
+      --train data/rl/qwen30_train.jsonl \
+      --eval data/rl/qwen30_eval.jsonl \
+      --expected-encoder Qwen/Qwen2.5-14B-Instruct \
+      --expected-revision cf98f3b3bbb457ad9e2bb7baf9a0125b6b88caa8
 
 # No ENTRYPOINT and no CMD. The platform execs the command from the submission form,
 # and a default here would be a second answer to what this image runs.

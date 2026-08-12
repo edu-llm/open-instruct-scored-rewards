@@ -17,7 +17,7 @@ import pathlib
 import pytest
 import torch
 
-from open_instruct.vllm_utils import _params_to_send, _split_fused_experts
+from open_instruct.vllm_utils import _params_to_send, _peft_target_specs, _split_fused_experts
 
 
 def experts_and_config(num_experts: int = 3, hidden: int = 8, inter: int = 4):
@@ -122,6 +122,70 @@ def test_send_splits_experts_and_ipc_avoids_copying():
         assert shares is not clone, f"clone={clone} should {'copy' if clone else 'alias'} storage"
 
 
+def test_qwen3_moe_sends_every_expert_weight_in_vllm_layout():
+    """Qwen3 expert weights reach vLLM under its per-expert checkpoint names."""
+    modeling = pytest.importorskip("transformers.models.qwen3_moe.modeling_qwen3_moe")
+    configuration = pytest.importorskip("transformers.models.qwen3_moe.configuration_qwen3_moe")
+    cfg = configuration.Qwen3MoeConfig(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=24,
+        moe_intermediate_size=8,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=8,
+        num_experts=3,
+        num_experts_per_tok=1,
+    )
+    model = modeling.Qwen3MoeForCausalLM(cfg)
+    experts = [(name, param) for name, param in model.named_parameters() if ".mlp.experts." in name]
+    sent = dict(_params_to_send(experts, None, clone=True))
+
+    fused_gate = next(((name, param) for name, param in experts if name.endswith(".gate_up_proj")), None)
+    fused_down = next(((name, param) for name, param in experts if name.endswith(".down_proj")), None)
+    if fused_gate and fused_down:
+        stem = fused_gate[0].removesuffix(".experts.gate_up_proj")
+        gate_up, down = fused_gate[1], fused_down[1]
+        intermediate = gate_up.shape[1] // 2
+        expected = {}
+        for expert in range(cfg.num_experts):
+            expected[f"{stem}.experts.{expert}.gate_proj.weight"] = gate_up[expert, :intermediate]
+            expected[f"{stem}.experts.{expert}.up_proj.weight"] = gate_up[expert, intermediate:]
+            expected[f"{stem}.experts.{expert}.down_proj.weight"] = down[expert]
+    else:
+        expected = dict(experts)
+
+    assert set(sent) == set(expected)
+    assert len(sent) == 3 * cfg.num_experts
+    for name, parameter in expected.items():
+        torch.testing.assert_close(sent[name], parameter)
+        assert sent[name].untyped_storage().data_ptr() != parameter.untyped_storage().data_ptr()
+
+
+def test_zero3_lora_sync_selects_only_reconstructed_base_weights():
+    class TinyPeftModel(torch.nn.Module):
+        def active_adapters(self):
+            return ["default"]
+
+    class TinyLora(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.base_layer = torch.nn.Linear(4, 3, bias=False)
+            self.lora_A = torch.nn.ModuleDict({"default": torch.nn.Linear(4, 2, bias=False)})
+            self.lora_B = torch.nn.ModuleDict({"default": torch.nn.Linear(2, 3, bias=False)})
+            self.active_adapters = ["default"]
+            self.lora_bias = {"default": False}
+
+    model = TinyPeftModel()
+    model.q_proj = TinyLora()
+    model.untouched = torch.nn.Linear(4, 4, bias=False)
+    specs = _peft_target_specs(model, lambda name: name.replace(".base_layer.", "."))
+
+    assert [(name, adapter) for name, _, adapter in specs] == [("q_proj.weight", "default")]
+    assert specs[0][1] is model.q_proj
+
+
 def test_every_sender_goes_through_the_shared_path():
     """No sender may map names itself, which is the bug this file exists to prevent recurring.
 
@@ -143,7 +207,7 @@ def test_every_sender_goes_through_the_shared_path():
             if called and inner.func.id == "name_mapper":
                 callers.add(node.name)
 
-    assert callers == {"_params_to_send", "_collect_weight_metadata"}, (
+    assert callers == {"_params_to_send", "_collect_weight_metadata", "_peft_target_specs"}, (
         f"name_mapper is applied in {sorted(callers)}; a sender outside the shared path will not "
         "split fused expert weights and will fail the vLLM sync"
     )

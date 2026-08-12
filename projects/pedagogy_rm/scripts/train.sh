@@ -46,11 +46,13 @@ EXP=${EXP:-pedagogy_olmo7b}
 # every run - including a smoke run behind a 1B policy - scores through the same 7B the
 # head was fitted on.
 POLICY=${POLICY:-allenai/OLMo-2-1124-7B-Instruct}
+POLICY_REVISION=${POLICY_REVISION:-}
 
 GPUS=${GPUS:-1}
 LEARNERS=${LEARNERS:-1}
 ENGINES=${ENGINES:-1}
 TP=${TP:-1}
+VLLM_EP=${VLLM_EP:-0}
 OFFLOAD=${OFFLOAD:-0}
 
 EPISODES=${EPISODES:-100000}
@@ -64,9 +66,24 @@ MICRO_BATCH=${MICRO_BATCH:-1}
 GRAD_CKPT=${GRAD_CKPT:-1}
 EVAL_EVERY=${EVAL_EVERY:-10}
 SAVE_FREQ=${SAVE_FREQ:-50}
+STATE_SAVE_FREQ=${STATE_SAVE_FREQ:-$SAVE_FREQ}
+KEEP_CKPTS=${KEEP_CKPTS:-1}
+WANDB_RESPONSE_SAMPLES=${WANDB_RESPONSE_SAMPLES:-0}
+WANDB_RESPONSE_EVERY=${WANDB_RESPONSE_EVERY:-5}
 BETA=${BETA:-0.02}
+INFLIGHT_UPDATES=${INFLIGHT_UPDATES:-1}
+ASYNC_STEPS=${ASYNC_STEPS:-8}
+RHO_CLAMP_LOWER=${RHO_CLAMP_LOWER:-0.0}
+RHO_CLAMP_UPPER=${RHO_CLAMP_UPPER:-2.0}
+RHO_MASK_LOWER=${RHO_MASK_LOWER:-0.0}
+RHO_MASK_UPPER=${RHO_MASK_UPPER:-0.0}
 SEED=${SEED:-1}
 OUTPUT_DIR=${OUTPUT_DIR:-output/$EXP}
+TRAIN_DATA=${TRAIN_DATA:-data/rl/train.jsonl}
+EVAL_DATA=${EVAL_DATA:-data/rl/eval.jsonl}
+MAX_PROMPT=${MAX_PROMPT:-1024}
+RESPONSE_LEN=${RESPONSE_LEN:-512}
+PACK_LEN=${PACK_LEN:-2048}
 
 LORA_R=${LORA_R:-32}
 # MIXTURE-OF-EXPERT KNOBS, empty for a dense policy so nothing changes for the existing arms.
@@ -89,6 +106,12 @@ CKPT_ROOT=${CKPT_ROOT:-}
 # so they contribute equally rather than in proportion to their spread. plugin.py argues
 # both sides. They are two arms of one experiment, not a setting with a right answer.
 SCORER=${SCORER:-pedagogy}
+REWARD_PLUGINS=${REWARD_PLUGINS:-projects/pedagogy_rm/plugin.py}
+SCORER_ARGS=${SCORER_ARGS:-}
+GROUP_REWARD_MODE=${GROUP_REWARD_MODE:-replace}
+REWARD_WEIGHT=${REWARD_WEIGHT:-1.0}
+GROUP_SCORER_STRICT=${GROUP_SCORER_STRICT:-0}
+APPLY_VERIFIABLE_REWARD=${APPLY_VERIFIABLE_REWARD:-1}
 
 # Which fitted head, and whether a length band is added on top of it. Both are arguments to
 # the scorer rather than edits to it, so an arm is a wrapper that exports three variables.
@@ -108,6 +131,8 @@ LENGTH_WEIGHT=${LENGTH_WEIGHT:-0}
 LENGTH_RAMP=${LENGTH_RAMP:-}
 
 scorer_spec="$SCORER:head=$HEAD"
+[ "$REWARD_WEIGHT" != "1.0" ] && scorer_spec="$scorer_spec,reward_weight=$REWARD_WEIGHT"
+[ -n "$SCORER_ARGS" ] && scorer_spec="$scorer_spec,$SCORER_ARGS"
 if [ -n "$LENGTH_BAND" ]; then
     scorer_spec="$scorer_spec,length_band=$LENGTH_BAND,length_weight=$LENGTH_WEIGHT"
     [ -n "$LENGTH_RAMP" ] && scorer_spec="$scorer_spec,length_ramp=$LENGTH_RAMP"
@@ -147,6 +172,7 @@ elif [ "$NEEDED" -lt "$GPUS" ]; then
 fi
 
 tuning=()
+[ -n "$POLICY_REVISION" ] && tuning+=(--model_revision "$POLICY_REVISION")
 if [ "$MODE" = full ]; then
     # 3e-7 rather than the 1e-5 LoRA wants: this update lands on the weights themselves
     # rather than on a low-rank adapter starting from zero.
@@ -158,13 +184,12 @@ if [ "$MODE" = full ]; then
         tuning+=(--deepspeed_offload_optimizer)
     fi
 elif [ "$MODE" = lora ]; then
-    # STAGE 2, NOT 3, and not merely because there is little left to shard. Stage 3
-    # splits parameters across ranks, and merge_adapter has to see a whole base weight
-    # to fold an adapter into it; grpo_fast raises rather than let that corrupt the send
-    # to vLLM.
+    # Stage 2 is fastest when the frozen base fits on one learner. Stage 3 is
+    # the A100-40GB path: grpo_fast gathers one LoRA target at a time and sends
+    # base+delta to vLLM without ever materializing the whole 30B checkpoint.
     tuning+=(
         --learning_rate "${LR:-1e-5}"
-        --deepspeed_stage 2
+        --deepspeed_stage "${ZERO_STAGE:-2}"
         --use_peft
         --lora_r "$LORA_R"
         ${LORA_TARGET_MODULES:+--lora_target_modules $LORA_TARGET_MODULES}
@@ -178,8 +203,10 @@ else
     echo "MODE must be full or lora, got '$MODE'" >&2
     exit 2
 fi
+[ -n "${DEEPSPEED_ZPG:-}" ] && tuning+=(--deepspeed_zpg "$DEEPSPEED_ZPG")
 
 [ "$COLOCATE" = 1 ] && tuning+=(--single_gpu_mode)
+[ "$VLLM_EP" = 1 ] && tuning+=(--vllm_enable_expert_parallel True)
 
 # --push_to_hub defaults to TRUE upstream, which publishes the trained policy to the
 # Hub under whatever account the environment happens to be logged into. It also fails
@@ -207,10 +234,10 @@ fi
 # was taken at 2:13 and requeued - and Slurm restarts the script from the top, so without
 # this the second attempt begins at step zero. grpo_fast resumes on its own when the
 # directory holds state: it reads optimization_steps_done and continues from the step
-# after. The frequency is tied to --save_freq because grpo_utils warns when they differ,
-# and a warning about two frequencies is worth less than having one number to reason about.
+# after. State can be saved more often than an exported model: under LoRA the state
+# excludes frozen parameters and is cheap, while an export still gathers adapters.
 if [ -n "$CKPT_ROOT" ]; then
-    tuning+=(--checkpoint_state_dir "$CKPT_ROOT/$EXP" --checkpoint_state_freq "$SAVE_FREQ")
+    tuning+=(--checkpoint_state_dir "$CKPT_ROOT/$EXP" --checkpoint_state_freq "$STATE_SAVE_FREQ")
 fi
 
 # Tested against "0" explicitly rather than for emptiness, because "0" is a non-empty
@@ -222,7 +249,8 @@ fi
 # the caller knows the card.
 VLLM_UTIL=${VLLM_UTIL:-$([ "$COLOCATE" = 1 ] && echo 0.30 || echo 0.55)}
 
-echo "mode=$MODE policy=$POLICY gpus=$GPUS learners=$LEARNERS engines=${ENGINES}x${TP}" \
+echo "mode=$MODE policy=$POLICY revision=${POLICY_REVISION:-default}" \
+     "gpus=$GPUS learners=$LEARNERS engines=${ENGINES}x${TP} expert_parallel=$VLLM_EP" \
      "offload=$OFFLOAD colocate=$COLOCATE vllm_util=$VLLM_UTIL"
 
 exec python -u open_instruct/grpo_fast.py \
@@ -230,21 +258,31 @@ exec python -u open_instruct/grpo_fast.py \
     --model_name_or_path "$POLICY" \
     --tokenizer_name_or_path "$POLICY" \
     --use_slow_tokenizer False \
-    --dataset_mixer_list data/rl/train.jsonl 1.0 \
+    --dataset_mixer_list "$TRAIN_DATA" 1.0 \
     --dataset_mixer_list_splits train \
-    --dataset_mixer_eval_list data/rl/eval.jsonl 1.0 \
+    --dataset_mixer_eval_list "$EVAL_DATA" 1.0 \
     --dataset_mixer_eval_list_splits train \
-    --reward_plugins projects/pedagogy_rm/plugin.py \
+    --reward_plugins "$REWARD_PLUGINS" \
     --group_scorer "$scorer_spec" \
-    --group_reward_mode replace \
-    --apply_verifiable_reward True \
-    --max_prompt_token_length 1024 \
-    --response_length 512 \
-    --pack_length 2048 \
+    --group_reward_mode "$GROUP_REWARD_MODE" \
+    --group_scorer_strict "$([ "$GROUP_SCORER_STRICT" = 1 ] && echo True || echo False)" \
+    --apply_verifiable_reward "$([ "$APPLY_VERIFIABLE_REWARD" = 1 ] && echo True || echo False)" \
+    --max_prompt_token_length "$MAX_PROMPT" \
+    --response_length "$RESPONSE_LEN" \
+    --pack_length "$PACK_LEN" \
     --num_unique_prompts_rollout "$PROMPTS" \
     --num_samples_per_prompt_rollout "$SAMPLES" \
+    --wandb_response_samples "$WANDB_RESPONSE_SAMPLES" \
+    --wandb_response_log_every "$WANDB_RESPONSE_EVERY" \
     --temperature 1.0 \
     --beta "$BETA" \
+    --inflight_updates "$([ "$INFLIGHT_UPDATES" = 1 ] && echo True || echo False)" \
+    --async_steps "$ASYNC_STEPS" \
+    --use_rho_correction True \
+    --rho_clamp_lower_bound "$RHO_CLAMP_LOWER" \
+    --rho_clamp_upper_bound "$RHO_CLAMP_UPPER" \
+    --rho_mask_lower_bound "$RHO_MASK_LOWER" \
+    --rho_mask_upper_bound "$RHO_MASK_UPPER" \
     "${tuning[@]}" \
     --lr_scheduler_type constant_with_warmup \
     --warmup_ratio 0.03 \
@@ -258,5 +296,6 @@ exec python -u open_instruct/grpo_fast.py \
     --vllm_gpu_memory_utilization "$VLLM_UTIL" \
     --local_eval_every "$EVAL_EVERY" \
     --save_freq "$SAVE_FREQ" \
+    --keep_last_n_checkpoints "$KEEP_CKPTS" \
     --output_dir "$OUTPUT_DIR" \
     --seed "$SEED"

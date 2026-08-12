@@ -252,6 +252,7 @@ def setup_vllm_engines(
         enable_prefix_caching=vllm_config.vllm_enable_prefix_caching,
         max_model_len=max_model_len,
         vllm_gpu_memory_utilization=vllm_config.vllm_gpu_memory_utilization,
+        enable_expert_parallel=vllm_config.vllm_enable_expert_parallel,
         single_gpu_mode=args.single_gpu_mode,
         pg=None,
         pools={},

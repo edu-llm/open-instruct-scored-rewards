@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import os
 import threading
@@ -394,12 +395,18 @@ class HFDataLoader(data_loader.DataLoaderBase):
 class VLLMConfig:
     vllm_num_engines: int = 1
     vllm_tensor_parallel_size: int = 1
+    vllm_enable_expert_parallel: bool = False
+    """Shard MoE experts across each engine's parallel workers instead of tensor-sharding them."""
     vllm_enforce_eager: bool = False
     vllm_attention_backend: str | None = None
     vllm_sync_backend: str = "nccl"
     vllm_gpu_memory_utilization: float = 0.9
     vllm_enable_prefix_caching: bool = False
     vllm_top_p: float = 1.0
+
+
+ROLLOUT_SAMPLE_TABLE_KEY = "rollouts/sample_responses"
+ROLLOUT_SAMPLE_TABLE_COLUMNS = ["rollout_step", "prompt", "response", "reward", "scenario", "target_level", "dataset"]
 
 
 @dataclass
@@ -508,6 +515,9 @@ class StreamingDataLoaderConfig:
     # Rollout saving
     save_traces: bool = False
     rollouts_save_path: str = "/weka/oe-adapt-default/allennlp/deletable_rollouts/"
+    wandb_response_samples: int = 0
+    """Bounded high/low/first response samples sent to the main process for W&B."""
+    wandb_response_log_every: int = 1
 
     # Computed at post_init
     max_possible_score: float = 1.0
@@ -546,6 +556,8 @@ class StreamingDataLoaderConfig:
             or self.apply_r1_style_format_reward
             or self.non_stop_penalty
             or self.apply_evolving_rubric_reward
+            or self.group_scorer
+            or self.score_verifiers
         ), "At least one reward must be applied!"
 
         if self.stop_strings is None:
@@ -559,6 +571,10 @@ class StreamingDataLoaderConfig:
 
         if self.save_traces and not self.rollouts_save_path:
             raise ValueError("`rollouts_save_path` must be provided when `save_traces` is True.")
+        if self.wandb_response_samples < 0:
+            raise ValueError("`wandb_response_samples` must be non-negative.")
+        if self.wandb_response_log_every < 1:
+            raise ValueError("`wandb_response_log_every` must be positive.")
 
     def build_dataloader(
         self,
@@ -717,7 +733,7 @@ def _aggregate_env_metrics(rollout_states: list[dict]) -> dict[str, float]:
         ename = info.get("env_name", "unknown")
         bucket = env_metrics.setdefault(ename, {})
         for k, v in info.items():
-            if k != "env_name" and isinstance(v, (int, float)):
+            if k != "env_name" and isinstance(v, int | float):
                 bucket.setdefault(k, []).append(float(v))
 
     return {
@@ -1587,6 +1603,35 @@ class DataPreparationActor:
                 **reward_metrics,
                 **batch_metrics_prefixed,
             }
+            if self.config.wandb_response_samples and self.training_step % self.config.wandb_response_log_every == 0:
+                ranked = sorted(range(len(scores)), key=lambda index: float(scores[index]))
+                candidates = [ranked[0], ranked[-1], *range(len(scores))]
+                selected = list(dict.fromkeys(candidates))[: self.config.wandb_response_samples]
+
+                def bounded_text(value: Any, limit: int = 4000) -> str:
+                    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+                    return text if len(text) <= limit else text[:limit] + "…"
+
+                response_rows = []
+                for index in selected:
+                    ground_truth = batch.ground_truths[index]
+                    if isinstance(ground_truth, str):
+                        try:
+                            ground_truth = json.loads(ground_truth)
+                        except json.JSONDecodeError:
+                            ground_truth = {}
+                    response_rows.append(
+                        [
+                            self.training_step,
+                            bounded_text(batch.raw_queries[index]),
+                            bounded_text(batch.decoded_responses[index]),
+                            float(scores[index]),
+                            ground_truth.get("scenario") if isinstance(ground_truth, dict) else None,
+                            ground_truth.get("target_level") if isinstance(ground_truth, dict) else None,
+                            batch.datasets[index],
+                        ]
+                    )
+                step_metrics[ROLLOUT_SAMPLE_TABLE_KEY] = response_rows
 
             tool_stats = EnvStatistics(tool_names=self.tool_names)
             for rollout_stats in result.request_info.tool_call_stats:

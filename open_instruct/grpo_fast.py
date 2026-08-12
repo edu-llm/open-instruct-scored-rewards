@@ -72,14 +72,7 @@ import torch.utils.data
 import wandb
 from datasets import Dataset
 from huggingface_hub import HfApi
-from peft import (
-    LoraConfig,
-    PeftModel,
-    TaskType,
-    get_peft_model,
-    get_peft_model_state_dict,
-    prepare_model_for_kbit_training,
-)
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model, prepare_model_for_kbit_training
 from ray.util import queue as ray_queue
 from ray.util.placement_group import PlacementGroup, placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
@@ -168,6 +161,7 @@ def _build_data_prep_actor_resume_state(checkpoint_state: dict[str, Any] | None)
 
 
 CHECKPOINT_COMPLETE_MARKER = ".checkpoint_complete"
+CHECKPOINT_STATE_COMPLETE_MARKER = ".checkpoint_state_complete"
 WEIGHT_SYNC_TIMEOUT_S = 120.0
 CLUSTER_STARTUP_TIMEOUT_S = 1200.0
 PLACEMENT_GROUP_READY_TIMEOUT_S = 300.0
@@ -474,11 +468,6 @@ class PolicyTrainerRayProcess(RayProcess):
         # activations keeps meaning something, because the policy can only change what
         # it writes and not the space it is read in.
         self.uses_peft = bool(model_config.use_peft)
-        if self.uses_peft and args.deepspeed_stage == 3:
-            # merge_adapter needs the real base weight, and under ZeRO-3 each rank holds
-            # only a shard of it. LoRA also removes the reason to use stage 3, since the
-            # optimizer state it shards is now a few tens of MB.
-            raise ValueError("use_peft is not supported with deepspeed_stage 3; use stage 2 or lower.")
         if self.uses_peft:
             if model_config.load_in_4bit or model_config.load_in_8bit:
                 # True, not a flag: gradient checkpointing is enabled unconditionally above.
@@ -526,7 +515,9 @@ class PolicyTrainerRayProcess(RayProcess):
                 self.model.mpu = None
                 path, states = self.model.load_checkpoint(
                     args.checkpoint_state_dir,
-                    load_module_strict=True,
+                    # LoRA checkpoints deliberately exclude the 30B frozen base;
+                    # it is restored from the pinned Hub revision before this load.
+                    load_module_strict=not self.uses_peft,
                     load_optimizer_states=True,
                     load_lr_scheduler_states=True,
                     load_module_only=False,
@@ -692,6 +683,20 @@ class PolicyTrainerRayProcess(RayProcess):
                 model_step=model_step,
                 gather_whole_model=self.args.gather_whole_model,
                 name_mapper=name_mapper,
+            )
+
+        if self.args.deepspeed_stage == 3:
+            if self.model_config.lora_target_parameters:
+                raise ValueError(
+                    "ZeRO-3 LoRA sync supports module targets only; "
+                    "leave lora_target_parameters empty for the A100 arm"
+                )
+            return vllm_utils.broadcast_zero3_lora_to_vllm(
+                model=module,
+                vllm_engines=self.vllm_engines,
+                model_update_group=self.model_update_group,
+                model_step=model_step,
+                name_mapper=_build_peft_name_mapper(name_mapper),
             )
 
         # vLLM knows nothing about adapters, so fold them into the base weights for the
@@ -910,7 +915,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 for key, value in batch_metrics.items():
                     if value is None:
                         continue
-                    if isinstance(value, (int, float, np.floating, np.integer)):
+                    if isinstance(value, int | float | np.floating | np.integer):
                         self.local_metrics[key] = value
                     else:
                         array_metrics[key] = value
@@ -964,7 +969,14 @@ class PolicyTrainerRayProcess(RayProcess):
         if self.model.mpu is not None:
             old_mpu = self.mpu
             self.model.mpu = None
-        self.model.save_checkpoint(checkpoint_state_dir, client_state=client_state)
+        self.model.save_checkpoint(
+            checkpoint_state_dir,
+            client_state=client_state,
+            # Saving four ZeRO shards of the unchanged 61 GB base every few
+            # steps would make the S3 mirror slower than the training. The
+            # pinned base revision plus adapters is the complete LoRA state.
+            exclude_frozen_parameters=self.uses_peft,
+        )
 
         # `save_checkpoint` needs to be called on all ranks, only rank 0 will have all the states
         if self.rank == 0:
@@ -1005,9 +1017,14 @@ class PolicyTrainerRayProcess(RayProcess):
         if is_olmo3:
             model_to_save.generation_config = get_olmo3_generation_config(tokenizer)
 
-        # gather parameters
+        is_peft_model = isinstance(model_to_save, PeftModel)
+        # A LoRA export contains only adapters. Gathering the frozen 61 GB base
+        # before throwing it away makes checkpointing the most failure-prone
+        # part of the A100 run, so skip it at the source.
         output_state_dict = {}
         for k, v in model_to_save.named_parameters():
+            if is_peft_model and not v.requires_grad:
+                continue
             # only gather z3 params
             params_to_fetch = _z3_params_to_fetch([v])
             with deepspeed.zero.GatheredParameters(params_to_fetch, enabled=len(params_to_fetch) > 0):
@@ -1016,40 +1033,29 @@ class PolicyTrainerRayProcess(RayProcess):
                     output_state_dict[k] = vv
 
         if self.rank == 0:
-            state_dict = model_to_save.state_dict()
-
-            # copy named_buffers with `persistent=True`
-            for k, v in model_to_save.named_buffers():
-                if k not in state_dict:
-                    continue
-                vv = v.data.cpu()
-                output_state_dict[k] = vv
-
-            state_dict_keys = set(state_dict.keys())
-            output_state_dict_keys = set(output_state_dict.keys())
-
-            # corner case for tie_word_embeddings, such as Qwen2-0.5B
-            if getattr(model_to_save.config, "tie_word_embeddings", False) and "lm_head.weight" in state_dict_keys:
-                state_dict_keys.remove("lm_head.weight")
-
-            assert state_dict_keys.issubset(output_state_dict_keys), (
-                f"mismatch keys {output_state_dict_keys.symmetric_difference(state_dict_keys)}"
-            )
-
             # only save peft weights https://github.com/microsoft/DeepSpeed/issues/4295
-            if isinstance(model_to_save, PeftModel):
-                model_to_save.save_pretrained(output_dir)
-                # self.args.deepspeed_stage, not self.stage, which this class has never had.
-                # The line was unreachable until grpo_fast learned to wrap the policy in a
-                # PeftModel, so an AttributeError sat here behind an isinstance nothing
-                # satisfied. It fires at the first checkpoint rather than at startup, which
-                # on a preemptable partition means a run dies exactly when it first tries to
-                # make itself resumable.
-                if self.args.deepspeed_stage == 3:
-                    torch.save(
-                        get_peft_model_state_dict(model_to_save, output_state_dict), output_path / "adapter_model.bin"
-                    )
+            if is_peft_model:
+                model_to_save.save_pretrained(output_dir, state_dict=output_state_dict)
             else:
+                state_dict = model_to_save.state_dict()
+
+                # copy named_buffers with `persistent=True`
+                for k, v in model_to_save.named_buffers():
+                    if k not in state_dict:
+                        continue
+                    vv = v.data.cpu()
+                    output_state_dict[k] = vv
+
+                state_dict_keys = set(state_dict.keys())
+                output_state_dict_keys = set(output_state_dict.keys())
+
+                # corner case for tie_word_embeddings, such as Qwen2-0.5B
+                if getattr(model_to_save.config, "tie_word_embeddings", False) and "lm_head.weight" in state_dict_keys:
+                    state_dict_keys.remove("lm_head.weight")
+
+                assert state_dict_keys.issubset(output_state_dict_keys), (
+                    f"mismatch keys {output_state_dict_keys.symmetric_difference(state_dict_keys)}"
+                )
                 model_to_save.save_pretrained(output_dir, state_dict=output_state_dict)
 
             self.tokenizer.save_pretrained(output_dir)
@@ -1520,6 +1526,7 @@ def create_model_and_optimizer(
         vllm_config.vllm_enable_prefix_caching,
         vllm_max_model_len,
         vllm_config.vllm_gpu_memory_utilization,
+        vllm_config.vllm_enable_expert_parallel,
         args.single_gpu_mode,
         pg=pg if args.single_gpu_mode else None,
         tool_parser_type=tools_config.tool_parser_type if tools_config else "legacy",
@@ -1800,6 +1807,13 @@ def one_training_step(
         # Convert evolving rubric table data to wandb.Table
         if RUBRIC_TABLE_KEY in metrics and isinstance(metrics[RUBRIC_TABLE_KEY], list):
             metrics[RUBRIC_TABLE_KEY] = wandb.Table(columns=RUBRIC_TABLE_COLUMNS, data=metrics[RUBRIC_TABLE_KEY])
+        if data_loader_lib.ROLLOUT_SAMPLE_TABLE_KEY in metrics and isinstance(
+            metrics[data_loader_lib.ROLLOUT_SAMPLE_TABLE_KEY], list
+        ):
+            metrics[data_loader_lib.ROLLOUT_SAMPLE_TABLE_KEY] = wandb.Table(
+                columns=data_loader_lib.ROLLOUT_SAMPLE_TABLE_COLUMNS,
+                data=metrics[data_loader_lib.ROLLOUT_SAMPLE_TABLE_KEY],
+            )
 
         # Convert array/list metrics to wandb histograms for logging.
         metrics_to_log = {}
@@ -2181,6 +2195,19 @@ def run_training(
                     ],
                     desc=f"Saving checkpoint state at step {training_step}",
                 )
+                # DeepSpeed writes `latest` on rank 0 before its final all-rank
+                # barrier. Publish a separate marker only after every Ray actor
+                # has returned, so an external mirror cannot copy half-written
+                # ZeRO shards.
+                checkpoint_root = pathlib.Path(args.checkpoint_state_dir)
+                checkpoint_tag = (checkpoint_root / "latest").read_text().strip()
+                if (
+                    not checkpoint_tag
+                    or pathlib.Path(checkpoint_tag).is_absolute()
+                    or len(pathlib.Path(checkpoint_tag).parts) != 1
+                ):
+                    raise ValueError(f"unsafe DeepSpeed checkpoint tag {checkpoint_tag!r}")
+                (checkpoint_root / checkpoint_tag / CHECKPOINT_STATE_COMPLETE_MARKER).touch()
                 logger.info(f"Saved checkpoint state at step {training_step} to {args.checkpoint_state_dir}")
 
         if training_step > resume_training_step:

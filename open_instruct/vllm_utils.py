@@ -1223,6 +1223,7 @@ def create_vllm_engines(
     enable_prefix_caching: bool,
     max_model_len: int,
     vllm_gpu_memory_utilization: float = 0.9,
+    enable_expert_parallel: bool = False,
     single_gpu_mode: bool = False,
     pg: PlacementGroup | None = None,
     tool_parser_type: str = "legacy",
@@ -1308,6 +1309,7 @@ def create_vllm_engines(
                 enable_prefix_caching=enable_prefix_caching,
                 max_model_len=max_model_len,
                 gpu_memory_utilization=vllm_gpu_memory_utilization,
+                enable_expert_parallel=enable_expert_parallel,
                 logprobs_mode="processed_logprobs",
                 bundle_indices=bundle_indices,
                 num_gpus=0.2 if use_hybrid_engine else 1,
@@ -1480,6 +1482,96 @@ def _broadcast_weights_ipc(
                 IPCWeightTransferEngine.trainer_send_weights(iterator=iter(mapped_params), trainer_args=trainer_args)
             return [engine.set_model_step.remote(model_step) for engine in vllm_engines]
     return []
+
+
+def _peft_target_specs(
+    model: torch.nn.Module, name_mapper: Callable[[str], str | None] | None
+) -> list[tuple[str, torch.nn.Module, str]]:
+    """The base weights changed by vanilla module-level LoRA adapters.
+
+    ZeRO-3 cannot call ``merge_adapter`` on a sharded base model. The rollout
+    copy already has the same frozen checkpoint, so only these reconstructed
+    base+delta tensors need to cross to vLLM.
+    """
+    specs = []
+    for module_name, module in model.named_modules():
+        lora_a = getattr(module, "lora_A", None)
+        lora_b = getattr(module, "lora_B", None)
+        base_layer = getattr(module, "base_layer", None)
+        if not lora_a or not lora_b or base_layer is None or not hasattr(base_layer, "weight"):
+            continue
+        active = list(module.active_adapters)
+        if len(active) != 1:
+            raise ValueError(f"ZeRO-3 LoRA sync requires exactly one active adapter, got {active}")
+        adapter = active[0]
+        if adapter not in lora_a or adapter not in lora_b:
+            continue
+        if getattr(module, "lora_bias", {}).get(adapter, False):
+            raise ValueError("ZeRO-3 LoRA sync does not support LoRA bias")
+        parameter_name = f"{module_name}.base_layer.weight"
+        mapped_name = name_mapper(parameter_name) if name_mapper else parameter_name
+        if mapped_name is not None:
+            specs.append((mapped_name, module, adapter))
+    if not specs:
+        raise ValueError("ZeRO-3 LoRA sync found no module-level LoRA targets")
+    return specs
+
+
+def broadcast_zero3_lora_to_vllm(
+    model: torch.nn.Module,
+    vllm_engines: list[ray.actor.ActorHandle],
+    model_update_group: Any,
+    model_step: int,
+    name_mapper: Callable[[str], str | None] | None = None,
+) -> list[ray.ObjectRef]:
+    """Send reconstructed LoRA target weights without gathering the 30B base.
+
+    Every learner rank enters each ``GatheredParameters`` context. Rank zero
+    adds the adapter delta to that one full base tensor and streams it to vLLM;
+    the tensor is released before the next target is gathered. This is the
+    memory-safe weight-sync path for LoRA on four 40 GB A100 learners.
+    """
+    if not torch.distributed.is_initialized():
+        raise ValueError("ZeRO-3 LoRA sync requires initialized distributed learners")
+    is_rank_0 = torch.distributed.get_rank() == 0
+    if is_rank_0 and model_update_group is None:
+        raise ValueError("ZeRO-3 LoRA sync requires the NCCL weight-transfer backend on rank zero")
+    specs = _peft_target_specs(model, name_mapper)
+
+    if is_rank_0:
+        ray.get([engine.sleep.remote() for engine in vllm_engines])
+        names = [name for name, _, _ in specs]
+        shapes = [
+            list(getattr(module.base_layer.weight, "ds_shape", module.base_layer.weight.shape))
+            for _, module, _ in specs
+        ]
+        update_info = {"names": names, "dtype_names": ["bfloat16"] * len(specs), "shapes": shapes, "packed": False}
+        refs = [engine.update_weights.remote({"update_info": update_info}, model_step) for engine in vllm_engines]
+    else:
+        refs = []
+
+    def merged_weights():
+        for mapped_name, module, adapter in specs:
+            parameters = [
+                module.base_layer.weight,
+                *module.lora_A[adapter].parameters(),
+                *module.lora_B[adapter].parameters(),
+            ]
+            with deepspeed.zero.GatheredParameters(parameters, enabled=True):
+                if is_rank_0:
+                    base = module.base_layer.weight.detach().to(torch.bfloat16)
+                    delta = module.get_delta_weight(adapter).detach().to(torch.bfloat16)
+                    yield mapped_name, (base + delta).contiguous()
+
+    if is_rank_0:
+        trainer_args = NCCLTrainerSendWeightsArgs(group=model_update_group, packed=False)
+        NCCLWeightTransferEngine.trainer_send_weights(iterator=iter(merged_weights()), trainer_args=trainer_args)
+    else:
+        # Rank zero drives the NCCL send while every other learner rank drives
+        # the matching ZeRO gathers in the same order.
+        for _ in merged_weights():
+            pass
+    return refs
 
 
 def broadcast_weights_to_vllm(

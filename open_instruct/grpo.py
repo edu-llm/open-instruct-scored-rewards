@@ -266,6 +266,7 @@ def main(
         vllm_config.vllm_enable_prefix_caching,
         streaming_config.max_prompt_token_length + streaming_config.response_length,
         vllm_config.vllm_gpu_memory_utilization,
+        vllm_config.vllm_enable_expert_parallel,
         args.single_gpu_mode,
         pg=pg if args.single_gpu_mode else None,
         tool_parser_type=tools_config.tool_parser_type,

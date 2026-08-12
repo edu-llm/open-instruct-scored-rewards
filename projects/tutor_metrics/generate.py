@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 
 from projects.tutor_metrics.metrics import RUNG_ANCHORS, SCENARIOS, Scenario
@@ -78,13 +79,24 @@ STYLES: dict[str, str] = {
 }
 
 
+def problem_text(item: dict) -> str:
+    """Render the complete problem, including choices needed by multiple-choice stems."""
+    choices = item.get("choices") or []
+    if not choices:
+        return item["question"]
+    options = "\n".join(f"{chr(65 + index)}. {choice}" for index, choice in enumerate(choices))
+    return f"{item['question']}\n\nOptions:\n{options}"
+
+
 def student_messages(item: dict, scenario: Scenario) -> list[dict]:
     solution = item.get("solution") or item.get("explanation") or f"The answer is {item.get('answer', '?')}."
     return [
         {"role": "system", "content": STUDENT_SYSTEM},
         {
             "role": "user",
-            "content": STUDENT_TASK.format(question=item["question"], solution=solution, state=scenario.student_state),
+            "content": STUDENT_TASK.format(
+                question=problem_text(item), solution=solution, state=scenario.student_state
+            ),
         },
     ]
 
@@ -92,7 +104,15 @@ def student_messages(item: dict, scenario: Scenario) -> list[dict]:
 def tutor_messages(item: dict, student_text: str, style: str) -> list[dict]:
     return [
         {"role": "system", "content": TUTOR_SYSTEM + "\n\n" + STYLES[style]},
-        {"role": "user", "content": f"Problem:\n{item['question']}\n\nStudent:\n{student_text}"},
+        {"role": "user", "content": f"Problem:\n{problem_text(item)}\n\nStudent:\n{student_text}"},
+    ]
+
+
+def tutor_messages_neutral(item: dict, student_text: str) -> list[dict]:
+    """Deployment context with no generation-style answer leaked to the head."""
+    return [
+        {"role": "system", "content": TUTOR_SYSTEM},
+        {"role": "user", "content": f"Problem:\n{problem_text(item)}\n\nStudent:\n{student_text}"},
     ]
 
 
@@ -125,6 +145,8 @@ async def moment(client, model: str, item: dict, scenario: Scenario, styles: lis
     return {
         "item_id": item.get("id") or item.get("item_no"),
         "question": item["question"],
+        "choices": item.get("choices"),
+        "gold_idx": item.get("gold_idx"),
         "solution": item.get("solution") or item.get("explanation"),
         "answer": item.get("answer"),
         "subject": item.get("subject"),
@@ -146,17 +168,36 @@ async def run(args) -> None:
     with open(args.items) as handle:
         items = [json.loads(line) for line in handle if line.strip()][: args.limit]
     scenarios = [s for s in SCENARIOS if not args.scenarios or s.key in args.scenarios.split(",")]
-    styles = args.styles.split(",")
+    styles = [] if args.student_only else args.styles.split(",")
     unknown = set(styles) - set(STYLES)
     if unknown:
         raise SystemExit(f"unknown styles {sorted(unknown)}; have {sorted(STYLES)}")
 
     jobs = [(item, scenario) for item in items for scenario in scenarios]
     random.Random(args.seed).shuffle(jobs)
+
+    # RESUME, BECAUSE THIS RUNS ON A PREEMPTABLE PARTITION. Slurm requeues the script from the
+    # top, so a job killed at 90% would otherwise regenerate everything and be killed again at
+    # 90%. Reading back what is already on disk makes each attempt strictly additive, and the
+    # key is (item, scenario) because that pair is what a moment is.
+    already: set[tuple[str, str]] = set()
+    if os.path.exists(args.out):
+        with open(args.out) as handle:
+            for line in handle:
+                if line.strip():
+                    row = json.loads(line)
+                    already.add((str(row["item_id"]), row["scenario"]))
+        jobs = [(i, s) for i, s in jobs if (str(i.get("id") or i.get("item_no")), s.key) not in already]
+        print(f"resuming: {len(already)} moments already written", flush=True)
+
     print(f"{len(jobs)} moments x {len(styles)} styles = {len(jobs) * len(styles)} tutor turns", flush=True)
 
     gate = asyncio.Semaphore(args.concurrency)
+    writes = asyncio.Lock()
     done = 0
+    # Line-buffered append, flushed per moment: a preemption costs at most the moments in flight
+    # rather than the whole run.
+    handle = open(args.out, "a", buffering=1)  # noqa: SIM115 - closed in the finally below
 
     async def one(item: dict, scenario: Scenario):
         nonlocal done
@@ -166,19 +207,20 @@ async def run(args) -> None:
             except Exception as exc:  # noqa: BLE001 - one bad item must not end a long run
                 print(f"  failed {item.get('id')} / {scenario.key}: {type(exc).__name__}: {exc}", flush=True)
                 return None
+        async with writes:
+            handle.write(json.dumps(out) + "\n")
             done += 1
             if done % 25 == 0:
                 print(f"  {done}/{len(jobs)}", flush=True)
-            return out
+        return out
 
-    results = await asyncio.gather(*(one(item, scenario) for item, scenario in jobs))
-    with open(args.out, "w") as handle:
-        for row in results:
-            if row is not None:
-                handle.write(json.dumps(row) + "\n")
+    try:
+        results = await asyncio.gather(*(one(item, scenario) for item, scenario in jobs))
+    finally:
+        handle.close()
 
     kept = sum(1 for r in results if r is not None)
-    print(f"wrote {kept} moments ({kept * len(styles)} tutor turns) to {args.out}")
+    print(f"wrote {kept} new moments ({kept * len(styles)} tutor turns) to {args.out}")
 
 
 def main() -> None:
@@ -188,6 +230,11 @@ def main() -> None:
     parser.add_argument("--base-url", default="http://localhost:8000/v1")
     parser.add_argument("--model", default="Qwen/Qwen3-30B-A3B-Instruct-2507")
     parser.add_argument("--styles", default=",".join(STYLES))
+    parser.add_argument(
+        "--student-only",
+        action="store_true",
+        help="generate prescribed student states without unused tutor turns (for online RL prompts)",
+    )
     parser.add_argument("--scenarios", default="", help="comma-separated subset; default all")
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--concurrency", type=int, default=32)

@@ -1,10 +1,10 @@
 # The root .gitignore excludes *.jsonl, which is right for this repository - traces,
 # generated dialogues and cached datasets all end in .jsonl and none of them belong in
-# git. The three files here are the exception, and they are tracked deliberately.
+# git. The small run-input artifacts here are the exception, tracked deliberately.
 #
-# They are the run's inputs rather than its data: head.npz is the fitted reward, and the
-# two jsonl files are the tutoring moments the policy answers. Together they are under
-# 2MB, and the eduLLM platform builds its container image from a git checkout, so an
+# They are run inputs rather than raw data: NPZ files are fitted rewards, and JSONL
+# files are tutoring moments the policy answers. The eduLLM platform builds its
+# container image from a git checkout, so an
 # artifact that is not committed is an artifact the run on AWS cannot see.
 #
 # The negation lives here rather than in the root file so that the reason travels with
