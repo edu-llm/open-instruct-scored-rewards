@@ -53,6 +53,7 @@ LEARNERS=${LEARNERS:-1}
 ENGINES=${ENGINES:-1}
 TP=${TP:-1}
 VLLM_EP=${VLLM_EP:-0}
+VLLM_ENFORCE_EAGER=${VLLM_ENFORCE_EAGER:-0}
 OFFLOAD=${OFFLOAD:-0}
 
 EPISODES=${EPISODES:-100000}
@@ -296,6 +297,7 @@ exec python -u open_instruct/grpo_fast.py \
     --vllm_num_engines "$ENGINES" \
     --vllm_tensor_parallel_size "$TP" \
     --vllm_gpu_memory_utilization "$VLLM_UTIL" \
+    --vllm_enforce_eager "$([ "$VLLM_ENFORCE_EAGER" = 1 ] && echo True || echo False)" \
     --local_eval_every "$EVAL_EVERY" \
     --save_freq "$SAVE_FREQ" \
     --keep_last_n_checkpoints "$KEEP_CKPTS" \
