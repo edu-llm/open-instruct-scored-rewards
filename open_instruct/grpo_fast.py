@@ -504,11 +504,9 @@ class PolicyTrainerRayProcess(RayProcess):
         optimization_steps_done = 0
         checkpoint_state = None
         if args.checkpoint_state_dir:
-            # check if the dir exists
-            if not os.path.exists(args.checkpoint_state_dir):
-                logger.warning(
-                    f"Skipping loading checkpoint state from {args.checkpoint_state_dir} because it does not exist!"
-                )
+            latest_checkpoint = os.path.join(args.checkpoint_state_dir, "latest")
+            if not os.path.isfile(latest_checkpoint):
+                logger.info(f"Starting without checkpoint state because {latest_checkpoint} does not exist")
             else:
                 # remove mpu for loading checkpoints, add it back after loading
                 old_mpu = self.mpu
