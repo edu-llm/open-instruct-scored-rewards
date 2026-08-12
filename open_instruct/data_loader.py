@@ -508,6 +508,8 @@ class StreamingDataLoaderConfig:
     group_reward_scale: float = 1.0
     group_scorer_strict: bool = False
     """Raise on a scorer error instead of falling back to the verifier score."""
+    group_max_possible_score: float = 1.0
+    """Upper bound used only for solve-rate metrics when a group scorer supplies reward."""
     score_verifiers: str | None = None
     """Registered per-sample Scorers to expose as ordinary verifiers, routed by
     the dataset's `dataset` column."""
@@ -568,6 +570,13 @@ class StreamingDataLoaderConfig:
             self.max_possible_score += self.verification_reward
         if self.apply_r1_style_format_reward and self.additive_format_reward:
             self.max_possible_score += self.r1_style_format_reward
+        if self.group_scorer:
+            if self.group_max_possible_score <= 0:
+                raise ValueError("`group_max_possible_score` must be positive when a group scorer is configured.")
+            if self.group_reward_mode == "replace":
+                self.max_possible_score = self.group_max_possible_score
+            else:
+                self.max_possible_score += self.group_max_possible_score
 
         if self.save_traces and not self.rollouts_save_path:
             raise ValueError("`rollouts_save_path` must be provided when `save_traces` is True.")

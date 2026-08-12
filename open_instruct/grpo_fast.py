@@ -1588,7 +1588,6 @@ def create_model_and_optimizer(
             "Restored data prep actor state from checkpoint "
             f"with training_step={data_prep_actor_state['training_step']}"
         )
-    ray_get_with_progress([_data_prep_actor.start.remote()], desc="Starting data prep actor")
     return (
         policy_group,
         vllm_engines,
@@ -1990,6 +1989,7 @@ def run_training(
     evaluation_inference_results_Q,
     weight_sync_metrics_Q,
     actor_manager: ActorManager,
+    data_prep_actor,
     model_dims: utils.ModelDims,
     checkpoint_state=None,
     base_env_config: EnvConfig | None = None,
@@ -2102,6 +2102,10 @@ def run_training(
         desc="Warming up learner for first weight sync",
     )
     weight_sync_thread_future, weight_sync_trigger = initialize_weight_sync(resume_training_step)
+    # Do not let generation (and its lazy 14B reward-model load) race the
+    # first learner-to-vLLM sync. Starting here also prevents stale base-model
+    # rollouts from entering the first optimizer batch.
+    ray_get_with_progress([data_prep_actor.start.remote()], desc="Starting data prep actor")
 
     for training_step in range(resume_training_step, args.num_training_steps + 1):
         start_time = time.perf_counter()
@@ -2605,6 +2609,7 @@ def main(
             evaluation_inference_results_Q,
             weight_sync_metrics_Q,
             actor_manager,
+            _data_prep_actor,
             model_dims,
             checkpoint_state,
             base_env_config,

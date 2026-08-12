@@ -53,6 +53,7 @@ export SCORER_ARGS=${SCORER_ARGS:-"device_map=balanced,max_memory_gib=8,batch_si
 export GROUP_REWARD_MODE=${GROUP_REWARD_MODE:-replace}
 export APPLY_VERIFIABLE_REWARD=${APPLY_VERIFIABLE_REWARD:-0}
 export GROUP_SCORER_STRICT=${GROUP_SCORER_STRICT:-1}
+export GROUP_MAX_SCORE=${GROUP_MAX_SCORE:-5.0}
 export REWARD_WEIGHT=${REWARD_WEIGHT:-1.0}
 export LENGTH_BAND=${LENGTH_BAND:-}
 export LENGTH_RAMP=${LENGTH_RAMP:-}
@@ -86,6 +87,7 @@ export KEEP_CKPTS=${KEEP_CKPTS:-4}
 export WANDB_PROJECT=${WANDB_PROJECT:-pedagogy-rm-qwen30}
 export WANDB_RESPONSE_SAMPLES=${WANDB_RESPONSE_SAMPLES:-4}
 export WANDB_RESPONSE_EVERY=${WANDB_RESPONSE_EVERY:-5}
+export WANDB_CONSOLE=${WANDB_CONSOLE:-off}
 
 if [ -n "${EDULLM_RUN_ID:-}" ]; then
     # eduLLM injects a team-scoped service key and joins W&B to the platform run

@@ -111,6 +111,7 @@ SCORER_ARGS=${SCORER_ARGS:-}
 GROUP_REWARD_MODE=${GROUP_REWARD_MODE:-replace}
 REWARD_WEIGHT=${REWARD_WEIGHT:-1.0}
 GROUP_SCORER_STRICT=${GROUP_SCORER_STRICT:-0}
+GROUP_MAX_SCORE=${GROUP_MAX_SCORE:-1.0}
 APPLY_VERIFIABLE_REWARD=${APPLY_VERIFIABLE_REWARD:-1}
 
 # Which fitted head, and whether a length band is added on top of it. Both are arguments to
@@ -266,6 +267,7 @@ exec python -u open_instruct/grpo_fast.py \
     --group_scorer "$scorer_spec" \
     --group_reward_mode "$GROUP_REWARD_MODE" \
     --group_scorer_strict "$([ "$GROUP_SCORER_STRICT" = 1 ] && echo True || echo False)" \
+    --group_max_possible_score "$GROUP_MAX_SCORE" \
     --apply_verifiable_reward "$([ "$APPLY_VERIFIABLE_REWARD" = 1 ] && echo True || echo False)" \
     --max_prompt_token_length "$MAX_PROMPT" \
     --response_length "$RESPONSE_LEN" \
