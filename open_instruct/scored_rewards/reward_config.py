@@ -163,13 +163,13 @@ class GroupRewardConfig(RewardConfig):
             try:
                 results = await scorer.score_group(group)
             except Exception:
+                logger.exception("scored_rewards: group scorer %r failed", scorer)
                 if self.group_scorer_strict:
                     raise
                 # Emitted on both paths so it charts as a rate. A judge endpoint
                 # that dies mid-run degrades every reward to the verifier
                 # fallback, and a metric that only appears when it breaks leaves
                 # a gap in the dashboard rather than a spike.
-                logger.exception("scored_rewards: group scorer %r failed; falling back to verifier scores", scorer)
                 metrics[f"scored/{name}/failed"] = 1.0
                 return scores, metrics
 

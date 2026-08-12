@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
 
 import numpy as np
+import torch
 
 from open_instruct.scored_rewards import Sample
 from projects.tutor_metrics.generate import tutor_messages_neutral
@@ -64,6 +66,33 @@ def test_metric_heads_compose_into_moving_target_reward(tmp_path):
     assert result.dimensions["contingency"] == 2.0
     assert result.dimensions["contributions"] == 0.75
     assert result.score == 2.75
+
+
+def test_states_requests_tensor_chat_template_output(tmp_path):
+    scorer = TutorMetricsHead(head=str(head_file(tmp_path)))
+    return_dict_values = []
+
+    class Tokenizer:
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def apply_chat_template(self, *_args, return_dict=None, **_kwargs):
+            return_dict_values.append(return_dict)
+            return torch.tensor([[1, 2, 3]])
+
+    class Model:
+        def __call__(self, input_ids, **_kwargs):
+            shape = (*input_ids.shape, 2)
+            return SimpleNamespace(hidden_states=(torch.zeros(shape), torch.ones(shape)))
+
+    scorer._model = Model()
+    scorer._tokenizer = Tokenizer()
+    scorer._input_device = torch.device("cpu")
+
+    states = scorer.states([([{"role": "user", "content": "Question"}], "Try one step.")])
+
+    assert return_dict_values == [False, False, False]
+    assert states[("eot", 1)][0].shape == (2,)
 
 
 def test_score_group_keeps_event_loop_live_and_serializes_worker(tmp_path):

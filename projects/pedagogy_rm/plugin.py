@@ -270,13 +270,19 @@ class PedagogyHead(GroupScorer):
             prepared = []
             for messages, turn in contexts[start : start + self.batch_size]:
                 prefix = self._tokenizer.apply_chat_template(
-                    messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+                    messages, tokenize=True, add_generation_prompt=True, return_tensors="pt", return_dict=False
                 )
                 empty = self._tokenizer.apply_chat_template(
-                    [*messages, {"role": "assistant", "content": ""}], tokenize=True, return_tensors="pt"
+                    [*messages, {"role": "assistant", "content": ""}],
+                    tokenize=True,
+                    return_tensors="pt",
+                    return_dict=False,
                 )
                 whole = self._tokenizer.apply_chat_template(
-                    [*messages, {"role": "assistant", "content": turn}], tokenize=True, return_tensors="pt"
+                    [*messages, {"role": "assistant", "content": turn}],
+                    tokenize=True,
+                    return_tensors="pt",
+                    return_dict=False,
                 )
                 prefix_len = prefix.shape[1]
                 suffix_len = max(1, empty.shape[1] - prefix_len)
