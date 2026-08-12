@@ -20,6 +20,10 @@ _TRANSFER = TransferConfig(
     multipart_chunksize=64 * 1024**2,
     max_concurrency=8,
     use_threads=True,
+    # The CRT transfer manager in the boto3/botocore versions resolved by the
+    # image injects ContentLength into ExtraArgs, then rejects its own key.
+    # Classic transfers still use awscrt for CRC32C checksums without that bug.
+    preferred_transfer_client="classic",
 )
 _UPLOAD_ARGS = {"ChecksumAlgorithm": "CRC32C"}
 _DOWNLOAD_ARGS = {"ChecksumMode": "ENABLED"}

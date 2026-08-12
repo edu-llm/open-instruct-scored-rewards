@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import boto3
 import pytest
 from boto3.s3.transfer import S3Transfer
+from botocore import UNSIGNED
+from botocore.config import Config
+from botocore.stub import ANY, Stubber
 
-from projects.pedagogy_rm.platform_run import _DOWNLOAD_ARGS, _UPLOAD_ARGS, restore_latest, upload_latest
+from projects.pedagogy_rm.platform_run import _DOWNLOAD_ARGS, _TRANSFER, _UPLOAD_ARGS, restore_latest, upload_latest
 
 
 class MemoryStore:
@@ -54,6 +58,31 @@ def local_checkpoint(root: Path, tag: str = "global_step1") -> None:
 def test_checksum_arguments_are_supported_by_boto3() -> None:
     assert set(_UPLOAD_ARGS).issubset(S3Transfer.ALLOWED_UPLOAD_ARGS)
     assert set(_DOWNLOAD_ARGS).issubset(S3Transfer.ALLOWED_DOWNLOAD_ARGS)
+    assert _TRANSFER.preferred_transfer_client == "classic"
+
+
+def test_classic_transfer_uploads_crc32c_without_crt_extra_args_bug(tmp_path: Path) -> None:
+    pytest.importorskip("awscrt")
+    source = tmp_path / "payload"
+    source.write_bytes(b"123456789")
+    client = boto3.client("s3", region_name="us-east-1", config=Config(signature_version=UNSIGNED))
+    stub = Stubber(client)
+    stub.add_response(
+        "put_object",
+        {},
+        {"Bucket": "bucket", "Key": "key", "Body": ANY, "ChecksumAlgorithm": "CRC32C"},
+    )
+    stub.activate()
+
+    client.upload_file(
+        str(source),
+        "bucket",
+        "key",
+        ExtraArgs=_UPLOAD_ARGS,
+        Config=_TRANSFER,
+    )
+
+    stub.assert_no_pending_responses()
 
 
 def test_latest_is_published_only_after_files_and_success_marker(tmp_path: Path) -> None:
