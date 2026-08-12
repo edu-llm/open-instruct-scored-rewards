@@ -30,6 +30,9 @@ export VLLM_UTIL=${VLLM_UTIL:-0.55}
 # The first A100 attempt failed while compiling/capturing vLLM graphs despite
 # peaking below 18 GiB/card. Eager mode bypasses that unstable startup path.
 export VLLM_ENFORCE_EAGER=${VLLM_ENFORCE_EAGER:-1}
+# vLLM's trusted, node-local EngineCore channel emits torch.dtype metadata
+# during startup, which its strict msgspec encoder cannot represent.
+export VLLM_ALLOW_INSECURE_SERIALIZATION=${VLLM_ALLOW_INSECURE_SERIALIZATION:-1}
 
 export LORA_R=${LORA_R:-16}
 export LORA_ALPHA=${LORA_ALPHA:-32}
