@@ -1,0 +1,19 @@
+schema_version: 1
+workload_profile: open-instruct-scored-rewards-train
+suggested_compute: gpu-8xa100
+command: >-
+  bash -lc 'export PRECISION=bfloat16
+  EDULLM_LAUNCH_CHECK=waived
+  NCCL_CUMEM_ENABLE=0
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+  TOKENIZERS_PARALLELISM=false
+  VLLM_WORKER_MULTIPROC_METHOD=spawn
+  EDULLM_RESUME_CHECKPOINT_URI=s3://sbsandbox-intern-edullm-outputs/teams/post-training/runs/run_019ff7fd-4392-7035-b97f-a4770690f1d6/checkpoints/
+  ;
+  test -n "$EDULLM_CHECKPOINT_DIR"
+  ;
+  test -n "$EDULLM_OUTPUT_PREFIX"
+  ;
+  python -u -m projects.pedagogy_rm.platform_run --sync-seconds 30
+  --
+  bash projects/pedagogy_rm/scripts/train_qwen3_30b_a3b.sh'
